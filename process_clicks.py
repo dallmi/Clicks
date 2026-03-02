@@ -702,6 +702,7 @@ def export_cdm_tables(con, output_dir):
     link_type_col = resolve_cp_column(events_cols, ['CP_Link_Type', 'CP_link_type', 'CP_LinkType'])
     component_col = resolve_cp_column(events_cols, ['CP_ComponentName', 'CP_componentName'])
     link_address_col = resolve_cp_column(events_cols, ['CP_Link_address', 'CP_link_address'])
+    country_col = resolve_cp_column(events_cols, ['client_CountryOrRegion', 'client_countryOrRegion', 'client_countryorregion'])
     link_label_col = resolve_cp_column(events_cols, ['CP_Link_label', 'CP_link_label'])
     file_name_col = resolve_cp_column(events_cols, ['CP_FileName_Label', 'CP_fileName_Label'])
     file_type_col = resolve_cp_column(events_cols, ['CP_FileType_Label', 'CP_fileType_Label'])
@@ -841,6 +842,7 @@ def export_cdm_tables(con, output_dir):
     ll_expr = f'e."{link_label_col}" AS link_label' if link_label_col else "NULL AS link_label"
     fn_expr = f'e."{file_name_col}" AS file_name' if file_name_col else "NULL AS file_name"
     ft_expr = f'e."{file_type_col}" AS file_type' if file_type_col else "NULL AS file_type"
+    cr_expr = f'e."{country_col}" AS client_country' if country_col else "NULL AS client_country"
 
     # Site join expressions
     sid_join = f'COALESCE(e."{site_id_col}", \'\')' if site_id_col else "''"
@@ -887,7 +889,7 @@ def export_cdm_tables(con, output_dir):
             {fn_expr},
             {ft_expr},
             e.name AS event_name,
-            e.client_CountryOrRegion AS client_country
+            {cr_expr}
         FROM events e
         LEFT JOIN dim_date dd ON e.session_date = dd.date_value
         {org_join}
@@ -1249,7 +1251,7 @@ def process_clicks(input_file=None, full_refresh=False):
     con.execute("VACUUM")
     con.execute("CHECKPOINT")
     db_size_after = os.path.getsize(db_path) / (1024 * 1024)
-    log(f"  Dropped hr_history and events_raw, vacuumed database")
+    log(f"  Dropped hr_history, events_raw, and CDM temp tables; vacuumed database")
     log(f"  Database size: {db_size_before:.1f} MB -> {db_size_after:.1f} MB")
 
     log(f"\nDatabase: {db_path}")
