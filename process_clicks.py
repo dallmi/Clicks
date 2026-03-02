@@ -630,6 +630,497 @@ def resolve_cp_column(col_names, candidates):
     return next((c for c in candidates if c in col_names), None)
 
 
+# ============================================================================
+# VIDEO ENGAGEMENT AGGREGATION
+# ============================================================================
+# Ported from VideoAnalytics/03_DEVELOPMENT/databricks_video_aggregation.py
+# (PySpark → DuckDB SQL). Implements the full video analytics pipeline:
+#   1. Filter & validate video events
+#   2. Valid pair matching (play→pause, play→ended, resume→pause, resume→ended)
+#   3. Watch time calculation (UTC timestamp differences)
+#   4. Interval merging for unique seconds watched
+#   5. Session-level aggregation
+#   6. User-Video aggregation (one row per gpn + video)
+#   7. View counting per business rules
+#   8. Enrichment: percentages, engagement score, data quality flags
+#
+# Reference: VideoAnalytics/04_TESTING/KQL_QUERIES.md for valid pair rules
+# ============================================================================
+
+def aggregate_video_engagement(con, output_dir):
+    """
+    Aggregate raw video click events into user-video engagement metrics.
+
+    Reads from the 'events' table (already built by add_calculated_columns),
+    filters for video events, and produces one row per gpn + video_id with
+    watch time, completion, engagement score, and data quality flags.
+
+    Output: output/video_engagement.parquet
+    """
+    log("\n" + "=" * 72)
+    log("VIDEO ENGAGEMENT AGGREGATION")
+    log("=" * 72)
+
+    # --- Resolve CP_Video_* column names dynamically ---
+    events_cols = con.execute("DESCRIBE events").df()['column_name'].tolist()
+
+    video_action_col = resolve_cp_column(events_cols, ['CP_Video_Action', 'CP_video_Action', 'CP_video_action'])
+    video_id_col = resolve_cp_column(events_cols, ['CP_Video_Id', 'CP_video_Id', 'CP_video_id', 'CP_Video_ID'])
+    video_title_col = resolve_cp_column(events_cols, ['CP_Video_Title', 'CP_video_Title', 'CP_video_title'])
+    video_duration_col = resolve_cp_column(events_cols, ['CP_Video_Duration', 'CP_video_Duration', 'CP_video_duration'])
+    video_played_col = resolve_cp_column(events_cols, ['CP_Video_PlayedTime', 'CP_video_PlayedTime', 'CP_video_playedTime'])
+    video_type_col = resolve_cp_column(events_cols, ['CP_Video_Type', 'CP_video_Type', 'CP_video_type'])
+    video_address_col = resolve_cp_column(events_cols, ['CP_Video_Address', 'CP_video_Address', 'CP_video_address'])
+
+    if not video_action_col or not video_id_col:
+        log("  No video columns found (CP_Video_Action / CP_Video_Id). Skipping video aggregation.")
+        log("=" * 72)
+        return
+
+    log(f"  Video columns resolved:")
+    log(f"    Action:   {video_action_col}")
+    log(f"    VideoId:  {video_id_col}")
+    log(f"    Title:    {video_title_col or 'not found'}")
+    log(f"    Duration: {video_duration_col or 'not found'}")
+    log(f"    Position: {video_played_col or 'not found'}")
+
+    # Helper for optional columns
+    def col_or_null(col_name, cast_to=None):
+        if col_name:
+            return f'CAST("{col_name}" AS {cast_to})' if cast_to else f'"{col_name}"'
+        return 'NULL'
+
+    # ── Step 1: Filter and normalize video events ──
+    log("  Step 1: Filtering video events...")
+    con.execute("DROP TABLE IF EXISTS video_events")
+    con.execute(f"""
+        CREATE TEMP TABLE video_events AS
+        SELECT
+            timestamp,
+            gpn,
+            session_id,
+            LOWER(TRIM("{video_action_col}")) AS action,
+            TRIM("{video_id_col}") AS video_id,
+            {col_or_null(video_title_col)} AS video_title,
+            {col_or_null(video_duration_col, 'DOUBLE')} AS video_duration,
+            {col_or_null(video_played_col, 'DOUBLE')} AS current_time_pos,
+            {col_or_null(video_type_col)} AS video_type,
+            {col_or_null(video_address_col)} AS video_address
+        FROM events
+        WHERE "{video_action_col}" IS NOT NULL
+          AND LOWER(TRIM("{video_action_col}")) IN ('play', 'pause', 'resume', 'ended')
+          AND "{video_id_col}" IS NOT NULL AND TRIM("{video_id_col}") != ''
+          AND gpn IS NOT NULL AND gpn != ''
+          AND timestamp IS NOT NULL
+    """)
+
+    video_count = con.execute("SELECT COUNT(*) AS n FROM video_events").df()['n'][0]
+    if video_count == 0:
+        log("  No valid video events found. Skipping video aggregation.")
+        con.execute("DROP TABLE IF EXISTS video_events")
+        log("=" * 72)
+        return
+
+    action_dist = con.execute("""
+        SELECT action, COUNT(*) AS n FROM video_events GROUP BY action ORDER BY n DESC
+    """).df()
+    log(f"  Found {video_count:,} video events:")
+    for _, row in action_dist.iterrows():
+        log(f"    {row['action']}: {int(row['n']):,}")
+
+    # ── Step 2: Valid pair matching (watch segments) ──
+    # A valid watch segment starts with play/resume and ends with pause/ended.
+    # Uses LAG() to look at the previous event within the same viewing session.
+    # Ported from VideoAnalytics calculate_watch_segments().
+    log("  Step 2: Matching valid event pairs...")
+    con.execute("DROP TABLE IF EXISTS video_segments")
+    con.execute("""
+        CREATE TEMP TABLE video_segments AS
+        WITH lagged AS (
+            SELECT
+                *,
+                LAG(action) OVER w AS prev_action,
+                LAG(current_time_pos) OVER w AS prev_time_pos,
+                LAG(timestamp) OVER w AS prev_timestamp
+            FROM video_events
+            WINDOW w AS (PARTITION BY gpn, video_id, session_id ORDER BY timestamp)
+        ),
+        with_deltas AS (
+            SELECT
+                *,
+                -- Video position delta (seconds of video content)
+                current_time_pos - prev_time_pos AS time_delta,
+                -- Real-world time delta (seconds elapsed)
+                EXTRACT(EPOCH FROM (timestamp - prev_timestamp)) AS timestamp_delta
+            FROM lagged
+            WHERE prev_action IS NOT NULL
+        )
+        SELECT
+            *,
+            -- Valid segment: play/resume → pause/ended, forward progress, plausible timing
+            (prev_action IN ('play', 'resume')
+             AND action IN ('pause', 'ended')
+             AND time_delta > 0
+             AND time_delta < 7200
+             AND time_delta <= timestamp_delta + 5
+            ) AS is_valid_segment,
+            -- Watched seconds (only for valid segments)
+            CASE
+                WHEN prev_action IN ('play', 'resume')
+                     AND action IN ('pause', 'ended')
+                     AND time_delta > 0
+                     AND time_delta < 7200
+                     AND time_delta <= timestamp_delta + 5
+                THEN time_delta
+                ELSE 0.0
+            END AS watched_seconds,
+            -- Skip detection
+            CASE
+                WHEN time_delta > 5 THEN 'forward'
+                WHEN time_delta < -2 THEN 'backward'
+                ELSE 'none'
+            END AS jump_type
+        FROM with_deltas
+    """)
+
+    valid_segments = con.execute("SELECT COUNT(*) AS n FROM video_segments WHERE is_valid_segment").df()['n'][0]
+    total_watch_sec = con.execute("SELECT COALESCE(SUM(watched_seconds), 0) AS s FROM video_segments WHERE is_valid_segment").df()['s'][0]
+    log(f"  Found {int(valid_segments):,} valid segments ({total_watch_sec:,.0f}s total watch time)")
+
+    # ── Step 3: Interval merging for unique seconds watched ──
+    # Ported from VideoAnalytics calculate_unique_seconds_efficient().
+    # 4-step algorithm: LAG → detect gaps → assign groups → merge intervals.
+    log("  Step 3: Calculating unique seconds (interval merging)...")
+    con.execute("DROP TABLE IF EXISTS video_unique_seconds")
+    con.execute("""
+        CREATE TEMP TABLE video_unique_seconds AS
+        WITH valid_segments AS (
+            SELECT
+                gpn, video_id, session_id,
+                prev_time_pos AS segment_start,
+                current_time_pos AS segment_end
+            FROM video_segments
+            WHERE is_valid_segment
+        ),
+        -- Step 3a: Add previous segment's end time
+        ordered_segments AS (
+            SELECT
+                gpn, video_id, session_id,
+                segment_start, segment_end,
+                LAG(segment_end) OVER (
+                    PARTITION BY gpn, video_id, session_id
+                    ORDER BY segment_start
+                ) AS prev_end
+            FROM valid_segments
+        ),
+        -- Step 3b: Detect new groups (gap between segments)
+        merged_flags AS (
+            SELECT
+                gpn, video_id, session_id,
+                segment_start, segment_end,
+                CASE
+                    WHEN prev_end IS NULL OR segment_start > prev_end
+                    THEN 1
+                    ELSE 0
+                END AS new_group
+            FROM ordered_segments
+        ),
+        -- Step 3c: Assign group IDs via cumulative sum
+        grouped AS (
+            SELECT
+                gpn, video_id, session_id,
+                segment_start, segment_end,
+                SUM(new_group) OVER (
+                    PARTITION BY gpn, video_id, session_id
+                    ORDER BY segment_start
+                ) AS group_id
+            FROM merged_flags
+        ),
+        -- Step 3d: Merge intervals per group
+        merged_intervals AS (
+            SELECT
+                gpn, video_id, session_id,
+                MIN(segment_start) AS merged_start,
+                MAX(segment_end) AS merged_end
+            FROM grouped
+            GROUP BY gpn, video_id, session_id, group_id
+        )
+        -- Sum merged interval lengths per user-video-session
+        SELECT
+            gpn, video_id, session_id,
+            SUM(merged_end - merged_start) AS unique_seconds_watched
+        FROM merged_intervals
+        GROUP BY gpn, video_id, session_id
+    """)
+
+    # ── Step 4: Session-level aggregation ──
+    # Ported from VideoAnalytics aggregate_sessions().
+    log("  Step 4: Aggregating session metrics...")
+    con.execute("DROP TABLE IF EXISTS video_sessions")
+    con.execute("""
+        CREATE TEMP TABLE video_sessions AS
+        SELECT
+            s.gpn,
+            s.video_id,
+            s.session_id,
+            -- Watch time
+            COALESCE(SUM(s.watched_seconds), 0) AS watch_time,
+            -- Position tracking
+            MAX(s.current_time_pos) AS max_position,
+            MIN(s.timestamp) AS session_start,
+            MAX(s.timestamp) AS session_end,
+            -- Completion (did video_ended occur in this session?)
+            MAX(CASE WHEN s.action = 'ended' THEN 1 ELSE 0 END) AS completed,
+            -- Interaction counts
+            SUM(CASE WHEN s.action = 'pause' THEN 1 ELSE 0 END) AS pause_count,
+            SUM(CASE WHEN s.jump_type = 'forward' THEN 1 ELSE 0 END) AS forward_skip_count,
+            SUM(CASE WHEN s.jump_type = 'backward' THEN 1 ELSE 0 END) AS backward_skip_count,
+            -- Event count
+            COUNT(*) AS event_count,
+            -- Unique seconds from interval merging
+            COALESCE(u.unique_seconds_watched, 0) AS unique_seconds_watched
+        FROM video_segments s
+        LEFT JOIN video_unique_seconds u
+            ON s.gpn = u.gpn AND s.video_id = u.video_id AND s.session_id = u.session_id
+        GROUP BY s.gpn, s.video_id, s.session_id, u.unique_seconds_watched
+    """)
+
+    session_count = con.execute("SELECT COUNT(*) AS n FROM video_sessions").df()['n'][0]
+    log(f"  {int(session_count):,} viewing sessions")
+
+    # ── Step 5: View counting per business rules ──
+    # Rules (from VideoAnalytics KQL docs):
+    #   1. Count all 'play' events per gpn + video + day
+    #   2. If no play on a day, check for 'resume' with a valid pair → count as 1 view
+    log("  Step 5: Counting views per business rules...")
+    con.execute("DROP TABLE IF EXISTS video_views")
+    con.execute("""
+        CREATE TEMP TABLE video_views AS
+        WITH daily_plays AS (
+            SELECT
+                gpn, video_id,
+                CAST(timestamp AS DATE) AS watch_day,
+                SUM(CASE WHEN action = 'play' THEN 1 ELSE 0 END) AS play_count,
+                -- Check if any resume has a valid pair on this day
+                MAX(CASE
+                    WHEN action IN ('pause', 'ended')
+                         AND prev_action = 'resume'
+                         AND is_valid_segment
+                    THEN 1 ELSE 0
+                END) AS has_valid_resume_pair
+            FROM video_segments
+            GROUP BY gpn, video_id, CAST(timestamp AS DATE)
+        )
+        SELECT
+            gpn, video_id,
+            SUM(
+                CASE
+                    WHEN play_count > 0 THEN play_count
+                    WHEN has_valid_resume_pair = 1 THEN 1
+                    ELSE 0
+                END
+            ) AS total_views
+        FROM daily_plays
+        GROUP BY gpn, video_id
+    """)
+
+    # ── Step 6: User-Video aggregation ──
+    # Ported from VideoAnalytics aggregate_user_video().
+    # One row per gpn + video_id with all engagement metrics.
+    log("  Step 6: Aggregating user-video metrics...")
+    con.execute("DROP TABLE IF EXISTS video_user_video")
+    con.execute("""
+        CREATE TEMP TABLE video_user_video AS
+        SELECT
+            s.gpn,
+            s.video_id,
+            -- Watch time metrics
+            SUM(s.watch_time) AS total_watch_time,
+            SUM(s.unique_seconds_watched) AS unique_seconds_watched,
+            MAX(s.max_position) AS max_position_reached,
+            -- Session counts
+            COUNT(DISTINCT s.session_id) AS session_count,
+            SUM(s.completed) AS completion_count,
+            -- Interaction metrics
+            ROUND(AVG(s.pause_count), 2) AS avg_pauses_per_session,
+            SUM(s.forward_skip_count) AS total_forward_skips,
+            SUM(s.backward_skip_count) AS total_backward_skips,
+            -- Temporal
+            MIN(s.session_start) AS first_watch_date,
+            MAX(s.session_end) AS last_watch_date,
+            -- Averages
+            ROUND(AVG(s.watch_time), 2) AS avg_watch_time_per_session,
+            -- Views from business rules
+            COALESCE(v.total_views, 0) AS total_views
+        FROM video_sessions s
+        LEFT JOIN video_views v ON s.gpn = v.gpn AND s.video_id = v.video_id
+        GROUP BY s.gpn, s.video_id, v.total_views
+    """)
+
+    uv_count = con.execute("SELECT COUNT(*) AS n FROM video_user_video").df()['n'][0]
+    log(f"  {int(uv_count):,} user-video combinations")
+
+    # ── Step 7: Enrich with metadata, percentages, scores, quality flags ──
+    # Ported from VideoAnalytics enrich_with_video_metadata().
+    log("  Step 7: Enriching with metadata and quality flags...")
+
+    # Get video metadata (duration + title) from events
+    con.execute("DROP TABLE IF EXISTS video_metadata")
+    con.execute(f"""
+        CREATE TEMP TABLE video_metadata AS
+        SELECT
+            video_id,
+            -- Use max reported duration; fall back to max position reached
+            MAX(video_duration) AS reported_duration,
+            -- Most recent title
+            LAST(video_title ORDER BY timestamp) AS latest_title,
+            -- Most recent type and address
+            LAST(video_type ORDER BY timestamp) AS latest_type,
+            LAST(video_address ORDER BY timestamp) AS latest_address
+        FROM video_events
+        WHERE video_id IS NOT NULL AND video_id != ''
+        GROUP BY video_id
+    """)
+
+    # Final enriched table
+    con.execute("DROP TABLE IF EXISTS video_engagement")
+    con.execute("""
+        CREATE TEMP TABLE video_engagement AS
+        SELECT
+            uv.gpn,
+            uv.video_id,
+            COALESCE(m.latest_title, '') AS video_title,
+            COALESCE(m.latest_type, '') AS video_type,
+            COALESCE(m.latest_address, '') AS video_address,
+
+            -- Duration: prefer reported, fall back to max position
+            COALESCE(m.reported_duration, uv.max_position_reached) AS video_duration,
+
+            -- Watch time metrics
+            ROUND(uv.total_watch_time, 2) AS total_watch_time,
+            ROUND(uv.unique_seconds_watched, 2) AS unique_seconds_watched,
+            ROUND(uv.max_position_reached, 2) AS max_position_reached,
+
+            -- Percentages (guard against zero/null duration)
+            CASE WHEN COALESCE(m.reported_duration, uv.max_position_reached, 0) > 0
+                 THEN ROUND((uv.total_watch_time / COALESCE(m.reported_duration, uv.max_position_reached)) * 100, 2)
+                 ELSE NULL
+            END AS watch_percentage,
+            CASE WHEN COALESCE(m.reported_duration, uv.max_position_reached, 0) > 0
+                 THEN ROUND((uv.max_position_reached / COALESCE(m.reported_duration, uv.max_position_reached)) * 100, 2)
+                 ELSE NULL
+            END AS completion_percentage,
+            CASE WHEN COALESCE(m.reported_duration, uv.max_position_reached, 0) > 0
+                 THEN ROUND((uv.unique_seconds_watched / COALESCE(m.reported_duration, uv.max_position_reached)) * 100, 2)
+                 ELSE NULL
+            END AS unique_watch_percentage,
+
+            -- Counts
+            uv.session_count,
+            CAST(uv.completion_count AS INTEGER) AS completion_count,
+            CAST(uv.total_views AS INTEGER) AS total_views,
+            uv.completion_count > 0 AS is_completed,
+            uv.session_count > 1 AS is_replay,
+
+            -- Interactions
+            uv.avg_pauses_per_session,
+            CAST(uv.total_forward_skips AS INTEGER) AS total_forward_skips,
+            CAST(uv.total_backward_skips AS INTEGER) AS total_backward_skips,
+
+            -- Engagement score: (watchTime/60)*1.0 + completions*50 + sessions*5 - skips*2
+            ROUND(
+                (uv.total_watch_time / 60.0) * 1.0
+                + uv.completion_count * 50.0
+                + uv.session_count * 5.0
+                - (uv.total_forward_skips + uv.total_backward_skips) * 2.0,
+                2
+            ) AS engagement_score,
+
+            -- Engagement tier
+            CASE
+                WHEN (uv.total_watch_time / 60.0) + uv.completion_count * 50.0 + uv.session_count * 5.0
+                     - (uv.total_forward_skips + uv.total_backward_skips) * 2.0 > 100 THEN 'High'
+                WHEN (uv.total_watch_time / 60.0) + uv.completion_count * 50.0 + uv.session_count * 5.0
+                     - (uv.total_forward_skips + uv.total_backward_skips) * 2.0 > 50 THEN 'Medium'
+                WHEN (uv.total_watch_time / 60.0) + uv.completion_count * 50.0 + uv.session_count * 5.0
+                     - (uv.total_forward_skips + uv.total_backward_skips) * 2.0 > 10 THEN 'Low'
+                ELSE 'Minimal'
+            END AS engagement_tier,
+
+            -- Data quality flags
+            CASE
+                WHEN uv.total_watch_time > COALESCE(m.reported_duration, uv.max_position_reached, 999999) * 1.2
+                    THEN 'excessive_watch_time'
+                WHEN uv.total_watch_time < 5
+                    THEN 'very_short_watch'
+                WHEN uv.completion_count > 0
+                     AND COALESCE(m.reported_duration, uv.max_position_reached, 0) > 0
+                     AND (uv.total_watch_time / COALESCE(m.reported_duration, uv.max_position_reached)) * 100 < 75
+                    THEN 'completed_without_sufficient_watch'
+                ELSE 'ok'
+            END AS data_quality_flag,
+
+            -- Temporal
+            CAST(uv.first_watch_date AS DATE) AS first_watch_date,
+            CAST(uv.last_watch_date AS DATE) AS last_watch_date,
+
+            -- Average
+            uv.avg_watch_time_per_session
+
+        FROM video_user_video uv
+        LEFT JOIN video_metadata m ON uv.video_id = m.video_id
+    """)
+
+    # ── Step 8: Export video_engagement.parquet ──
+    output_dir.mkdir(parents=True, exist_ok=True)
+    video_file = output_dir / 'video_engagement.parquet'
+    if video_file.exists():
+        video_file.unlink()
+
+    con.execute(f"COPY video_engagement TO '{video_file}' (FORMAT PARQUET, COMPRESSION SNAPPY)")
+
+    final_count = con.execute("SELECT COUNT(*) AS n FROM video_engagement").df()['n'][0]
+    file_size = os.path.getsize(video_file) / (1024 * 1024)
+    log(f"  video_engagement.parquet ({int(final_count):,} rows, {file_size:.1f} MB)")
+
+    # Summary stats
+    stats = con.execute("""
+        SELECT
+            COUNT(*) AS combinations,
+            COUNT(DISTINCT gpn) AS unique_viewers,
+            COUNT(DISTINCT video_id) AS unique_videos,
+            ROUND(AVG(total_watch_time), 1) AS avg_watch_time,
+            ROUND(AVG(CASE WHEN is_completed THEN watch_percentage END), 1) AS avg_completion_watch_pct,
+            SUM(CASE WHEN is_completed THEN 1 ELSE 0 END) AS completed_count,
+            SUM(CASE WHEN data_quality_flag = 'completed_without_sufficient_watch' THEN 1 ELSE 0 END) AS gaming_count
+        FROM video_engagement
+    """).df()
+
+    log(f"  Summary:")
+    log(f"    User-video combinations: {int(stats['combinations'][0]):,}")
+    log(f"    Unique viewers: {int(stats['unique_viewers'][0]):,}")
+    log(f"    Unique videos: {int(stats['unique_videos'][0]):,}")
+    log(f"    Avg watch time: {stats['avg_watch_time'][0]:.1f}s")
+    log(f"    Completed at least once: {int(stats['completed_count'][0]):,}")
+    if stats['gaming_count'][0] > 0:
+        log(f"    Gaming flag (completed <75% watch): {int(stats['gaming_count'][0]):,}")
+
+    # Engagement tier distribution
+    tier_dist = con.execute("""
+        SELECT engagement_tier, COUNT(*) AS n
+        FROM video_engagement
+        GROUP BY engagement_tier
+        ORDER BY CASE engagement_tier
+            WHEN 'High' THEN 1 WHEN 'Medium' THEN 2
+            WHEN 'Low' THEN 3 ELSE 4 END
+    """).df()
+    log(f"    Engagement tiers:")
+    for _, row in tier_dist.iterrows():
+        log(f"      {row['engagement_tier']}: {int(row['n']):,}")
+
+    log("=" * 72)
+
+
 def export_parquet_files(con, output_dir):
     """Export all Parquet files for reporting."""
     log("Exporting Parquet files...")
@@ -1125,6 +1616,33 @@ def print_summary(con, output_dir=None):
         for _, row in site_df.iterrows():
             log(f"    {row['site_name']:<35s} {int(row['cnt']):>8,}  ({row['pct']:.1f}%)")
 
+    # --- Video engagement summary ---
+    video_file = Path(output_dir) / 'video_engagement.parquet' if output_dir else None
+    if video_file and video_file.exists():
+        try:
+            video_stats = con.execute(f"""
+                SELECT
+                    COUNT(*) AS combinations,
+                    COUNT(DISTINCT gpn) AS viewers,
+                    COUNT(DISTINCT video_id) AS videos,
+                    ROUND(AVG(total_watch_time), 1) AS avg_watch_sec,
+                    SUM(CASE WHEN is_completed THEN 1 ELSE 0 END) AS completed,
+                    SUM(CASE WHEN data_quality_flag != 'ok' THEN 1 ELSE 0 END) AS flagged
+                FROM read_parquet('{video_file}')
+            """).df().iloc[0]
+
+            log("\n  VIDEO ENGAGEMENT")
+            log("  " + "-" * 60)
+            log(f"    User-video combinations: {int(video_stats['combinations']):>8,}")
+            log(f"    Unique viewers:          {int(video_stats['viewers']):>8,}")
+            log(f"    Unique videos:           {int(video_stats['videos']):>8,}")
+            log(f"    Avg watch time:          {video_stats['avg_watch_sec']:>8.1f}s")
+            log(f"    Completed at least once: {int(video_stats['completed']):>8,}")
+            if video_stats['flagged'] > 0:
+                log(f"    Data quality flags:      {int(video_stats['flagged']):>8,}")
+        except Exception:
+            pass  # Video file may not have been created this run
+
     log("\n" + "=" * 64)
 
 
@@ -1231,6 +1749,9 @@ def process_clicks(input_file=None, full_refresh=False):
     # Add calculated columns (with HR join if available)
     add_calculated_columns(con, has_hr_history=has_hr_history)
 
+    # Video engagement aggregation (produces output/video_engagement.parquet)
+    aggregate_video_engagement(con, output_dir)
+
     # Export Parquet files
     export_parquet_files(con, output_dir)
 
@@ -1245,13 +1766,17 @@ def process_clicks(input_file=None, full_refresh=False):
     db_size_before = os.path.getsize(db_path) / (1024 * 1024)
     con.execute("DROP TABLE IF EXISTS hr_history")
     con.execute("DROP TABLE IF EXISTS events_raw")
+    for video_table in ['video_events', 'video_segments', 'video_unique_seconds',
+                         'video_sessions', 'video_views', 'video_user_video',
+                         'video_metadata', 'video_engagement']:
+        con.execute(f"DROP TABLE IF EXISTS {video_table}")
     for cdm_table in ['dim_date', 'dim_organization', 'dim_site', 'dim_page',
                        'dim_link_type', 'dim_component', 'fact_clicks']:
         con.execute(f"DROP TABLE IF EXISTS {cdm_table}")
     con.execute("VACUUM")
     con.execute("CHECKPOINT")
     db_size_after = os.path.getsize(db_path) / (1024 * 1024)
-    log(f"  Dropped hr_history, events_raw, and CDM temp tables; vacuumed database")
+    log(f"  Dropped hr_history, events_raw, video temp tables, and CDM temp tables; vacuumed database")
     log(f"  Database size: {db_size_before:.1f} MB -> {db_size_after:.1f} MB")
 
     log(f"\nDatabase: {db_path}")
