@@ -20,6 +20,14 @@ Application Insights (KQL)
         +---> data/clicks.db                  (DuckDB database)
         +---> output/events_raw.parquet       (all events with HR fields)
         +---> output/events_anonymized.parquet (anonymized: GPNs hashed, emails dropped)
+        +---> output/cdm/                     (star-schema CDM tables)
+              +---> dim_date.parquet
+              +---> dim_organization.parquet
+              +---> dim_site.parquet
+              +---> dim_page.parquet
+              +---> dim_link_type.parquet
+              +---> dim_component.parquet
+              +---> fact_clicks.parquet
 ```
 
 ---
@@ -213,6 +221,101 @@ This adds organisational fields: `hr_division`, `hr_unit`, `hr_area`, `hr_sector
 |------|----------|-------|
 | `events_raw.parquet` | All events with all calculated + HR columns | One row per event |
 | `events_anonymized.parquet` | Same as above but GPNs hashed, emails dropped | One row per event |
+
+### 4. CDM Star-Schema Export
+
+After the flat Parquet files, the pipeline also exports a set of star-schema dimension and fact tables into `output/cdm/`. These are designed for Power BI star-schema modelling and for future cross-pipeline analytics (joining Clicks with SearchAnalytics, Video, and PageViews data).
+
+**Privacy**: The CDM files contain no raw GPN or email. GPN is SHA-256 hashed to `person_hash`.
+
+#### Shared Dimensions (identical schema across all pipelines)
+
+**dim_date** — one row per distinct `session_date`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `date_key` | INTEGER | Surrogate PK |
+| `date_value` | DATE | The calendar date |
+| `year` | INTEGER | |
+| `quarter` | INTEGER | 1–4 |
+| `month` | INTEGER | 1–12 |
+| `month_name` | VARCHAR | January, February, ... |
+| `week` | INTEGER | ISO week number |
+| `day_of_week` | INTEGER | 1=Monday, 7=Sunday |
+| `day_name` | VARCHAR | Monday, Tuesday, ... |
+| `is_weekend` | BOOLEAN | |
+
+**dim_organization** — one row per distinct HR field combination (SCD Type 2)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `org_key` | INTEGER | Surrogate PK |
+| `org_hash` | VARCHAR | MD5 of all HR fields (internal join key) |
+| `division` | VARCHAR | GCRS division |
+| `unit` | VARCHAR | GCRS unit |
+| `area` | VARCHAR | GCRS area |
+| `sector` | VARCHAR | GCRS sector |
+| `segment` | VARCHAR | GCRS segment |
+| `function` | VARCHAR | GCRS function |
+| `ou_code` | VARCHAR | Organisational unit code |
+| `country` | VARCHAR | Work location country |
+| `region` | VARCHAR | Work location region |
+| `job_title` | VARCHAR | |
+| `job_family` | VARCHAR | |
+| `management_level` | VARCHAR | |
+| `cost_center` | VARCHAR | |
+
+#### Pipeline-Specific Dimensions
+
+| Dimension | Natural Key | Columns |
+|-----------|------------|---------|
+| `dim_site` | site_id + site_name | `site_key`, `site_id`, `site_name` |
+| `dim_page` | page_id + page_name + page_url + content_type + page_status | `page_key`, `page_id`, `page_name`, `page_url`, `content_type`, `page_status` |
+| `dim_link_type` | link_type | `link_type_key`, `link_type` |
+| `dim_component` | component_name | `component_key`, `component_name` |
+
+#### Fact Table: fact_clicks
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `date_key` | INTEGER | FK → dim_date |
+| `org_key` | INTEGER | FK → dim_organization |
+| `site_key` | INTEGER | FK → dim_site |
+| `page_key` | INTEGER | FK → dim_page |
+| `link_type_key` | INTEGER | FK → dim_link_type |
+| `component_key` | INTEGER | FK → dim_component |
+| `person_hash` | VARCHAR | SHA-256 hashed GPN (anonymized) |
+| `user_id` | VARCHAR | User identifier |
+| `session_id` | VARCHAR | Session identifier |
+| `session_key` | VARCHAR | Composite session key |
+| `timestamp` | TIMESTAMP | Event timestamp (UTC) |
+| `timestamp_cet` | TIMESTAMP | Event timestamp (CET) |
+| `event_order` | INTEGER | Sequence within session |
+| `prev_event` | VARCHAR | Previous event name |
+| `ms_since_prev_event` | BIGINT | Milliseconds since previous event |
+| `sec_since_prev_event` | DOUBLE | Seconds since previous event |
+| `time_since_prev_bucket` | VARCHAR | Categorised interval |
+| `event_hour` | INTEGER | Hour in CET (0–23) |
+| `event_weekday` | VARCHAR | Day name |
+| `link_address` | VARCHAR | Target URL |
+| `link_label` | VARCHAR | Link text |
+| `file_name` | VARCHAR | Downloaded file name |
+| `file_type` | VARCHAR | Downloaded file type |
+| `event_name` | VARCHAR | App Insights event type |
+| `client_country` | VARCHAR | Client country/region |
+
+#### Power BI Setup
+
+In Power BI, import each parquet file as a separate table and create relationships:
+
+- `fact_clicks[date_key]` → `dim_date[date_key]`
+- `fact_clicks[org_key]` → `dim_organization[org_key]`
+- `fact_clicks[site_key]` → `dim_site[site_key]`
+- `fact_clicks[page_key]` → `dim_page[page_key]`
+- `fact_clicks[link_type_key]` → `dim_link_type[link_type_key]`
+- `fact_clicks[component_key]` → `dim_component[component_key]`
+
+This star schema provides better query performance and compression in Power BI compared to the flat denormalized files.
 
 ---
 

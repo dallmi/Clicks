@@ -26,6 +26,13 @@ Output:
     - data/clicks.db                     (DuckDB database)
     - output/events_raw.parquet          (all event-level data with HR fields)
     - output/events_anonymized.parquet   (anonymized: GPNs hashed, emails dropped)
+    - output/cdm/dim_date.parquet        (CDM: date dimension, shared across pipelines)
+    - output/cdm/dim_organization.parquet(CDM: HR org dimension, shared across pipelines)
+    - output/cdm/dim_site.parquet        (CDM: site dimension)
+    - output/cdm/dim_page.parquet        (CDM: page dimension)
+    - output/cdm/dim_link_type.parquet   (CDM: link type dimension)
+    - output/cdm/dim_component.parquet   (CDM: component dimension)
+    - output/cdm/fact_clicks.parquet     (CDM: fact table with FK integers, anonymized)
 
 Primary Key: timestamp + user_id + session_id + name
     On conflict, the latest file's data takes precedence.
@@ -618,6 +625,11 @@ def add_calculated_columns(con, has_hr_history=False):
             log(f"    UTC: {utc_ts} (hour {int(row['utc_hour']):02d}) -> CET: {cet_ts} (hour {int(row['cet_hour']):02d}) | session_date: {row['session_date']}")
 
 
+def resolve_cp_column(col_names, candidates):
+    """Return first matching column name from candidates, or None."""
+    return next((c for c in candidates if c in col_names), None)
+
+
 def export_parquet_files(con, output_dir):
     """Export all Parquet files for reporting."""
     log("Exporting Parquet files...")
@@ -669,6 +681,242 @@ def export_parquet_files(con, output_dir):
     log(f"  events_anonymized.parquet size: {anonymized_size:.1f} MB")
 
 
+def export_cdm_tables(con, output_dir):
+    """Export CDM star-schema dimension and fact tables as Parquet files."""
+    log("\nExporting CDM star-schema tables...")
+
+    cdm_dir = Path(output_dir) / 'cdm'
+    cdm_dir.mkdir(parents=True, exist_ok=True)
+
+    # Discover available columns in the events table
+    events_cols = con.execute("DESCRIBE events").df()['column_name'].tolist()
+
+    # Resolve CP_ column name variants
+    site_id_col = resolve_cp_column(events_cols, ['CP_SiteID', 'CP_siteID', 'CP_SiteId'])
+    site_name_col = resolve_cp_column(events_cols, ['CP_SiteName', 'CP_siteName'])
+    page_id_col = resolve_cp_column(events_cols, ['CP_PageId', 'CP_pageId', 'CP_PageID'])
+    page_name_col = resolve_cp_column(events_cols, ['CP_PageName', 'CP_pageName'])
+    page_url_col = resolve_cp_column(events_cols, ['CP_PageURL', 'CP_pageURL', 'CP_PageUrl'])
+    content_type_col = resolve_cp_column(events_cols, ['CP_ContentType', 'CP_contentType'])
+    page_status_col = resolve_cp_column(events_cols, ['CP_PageStatus', 'CP_pageStatus'])
+    link_type_col = resolve_cp_column(events_cols, ['CP_Link_Type', 'CP_link_type', 'CP_LinkType'])
+    component_col = resolve_cp_column(events_cols, ['CP_ComponentName', 'CP_componentName'])
+    link_address_col = resolve_cp_column(events_cols, ['CP_Link_address', 'CP_link_address'])
+    link_label_col = resolve_cp_column(events_cols, ['CP_Link_label', 'CP_link_label'])
+    file_name_col = resolve_cp_column(events_cols, ['CP_FileName_Label', 'CP_fileName_Label'])
+    file_type_col = resolve_cp_column(events_cols, ['CP_FileType_Label', 'CP_fileType_Label'])
+
+    # Check which HR fields are available
+    hr_fields = ['hr_division', 'hr_unit', 'hr_area', 'hr_sector', 'hr_segment',
+                 'hr_function', 'hr_ou_code', 'hr_country', 'hr_region',
+                 'hr_job_title', 'hr_job_family', 'hr_management_level', 'hr_cost_center']
+    available_hr = [f for f in hr_fields if f in events_cols]
+    has_hr = len(available_hr) > 0
+
+    # Helper to build a safe column expression
+    def col_expr(col_name, default="''"):
+        return f'COALESCE("{col_name}", {default})' if col_name else default
+
+    # ── dim_date ──
+    con.execute("""
+        CREATE OR REPLACE TEMP TABLE dim_date AS
+        SELECT
+            ROW_NUMBER() OVER (ORDER BY date_value) AS date_key,
+            date_value,
+            YEAR(date_value) AS year,
+            QUARTER(date_value) AS quarter,
+            MONTH(date_value) AS month,
+            MONTHNAME(date_value) AS month_name,
+            WEEKOFYEAR(date_value) AS week,
+            ISODOW(date_value) AS day_of_week,
+            DAYNAME(date_value) AS day_name,
+            CASE WHEN ISODOW(date_value) IN (6, 7) THEN TRUE ELSE FALSE END AS is_weekend
+        FROM (
+            SELECT DISTINCT session_date AS date_value
+            FROM events
+            WHERE session_date IS NOT NULL
+        )
+    """)
+
+    # ── dim_organization ──
+    if has_hr:
+        hash_parts = " || '|' || ".join([f"COALESCE({f}, '')" for f in available_hr])
+        hr_select = ', '.join([f'{f} AS {f.replace("hr_", "")}' for f in available_hr])
+        # Pad missing HR fields with NULL
+        missing_hr = [f for f in hr_fields if f not in available_hr]
+        null_parts = ', '.join([f"NULL AS {f.replace('hr_', '')}" for f in missing_hr])
+        full_select = hr_select + (', ' + null_parts if null_parts else '')
+        con.execute(f"""
+            CREATE OR REPLACE TEMP TABLE dim_organization AS
+            SELECT
+                ROW_NUMBER() OVER (ORDER BY org_hash) AS org_key,
+                org_hash,
+                {full_select}
+            FROM (
+                SELECT DISTINCT
+                    MD5({hash_parts}) AS org_hash,
+                    {', '.join(available_hr)}
+                FROM events
+            )
+        """)
+    else:
+        null_cols = ', '.join([f"NULL AS {f.replace('hr_', '')}" for f in hr_fields])
+        con.execute(f"""
+            CREATE OR REPLACE TEMP TABLE dim_organization AS
+            SELECT 1 AS org_key, '' AS org_hash, {null_cols}
+        """)
+
+    # ── dim_site ──
+    sid_expr = col_expr(site_id_col)
+    sname_expr = col_expr(site_name_col)
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE dim_site AS
+        SELECT
+            ROW_NUMBER() OVER (ORDER BY site_id, site_name) AS site_key,
+            site_id, site_name
+        FROM (
+            SELECT DISTINCT
+                {sid_expr} AS site_id,
+                {sname_expr} AS site_name
+            FROM events
+        )
+    """)
+
+    # ── dim_page ──
+    pid_expr = col_expr(page_id_col)
+    pname_expr = col_expr(page_name_col)
+    purl_expr = col_expr(page_url_col)
+    ctype_expr = col_expr(content_type_col)
+    pstat_expr = col_expr(page_status_col)
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE dim_page AS
+        SELECT
+            ROW_NUMBER() OVER (ORDER BY page_id, page_name) AS page_key,
+            page_id, page_name, page_url, content_type, page_status
+        FROM (
+            SELECT DISTINCT
+                {pid_expr} AS page_id,
+                {pname_expr} AS page_name,
+                {purl_expr} AS page_url,
+                {ctype_expr} AS content_type,
+                {pstat_expr} AS page_status
+            FROM events
+        )
+    """)
+
+    # ── dim_link_type ──
+    lt_expr = col_expr(link_type_col, "'(unknown)'")
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE dim_link_type AS
+        SELECT
+            ROW_NUMBER() OVER (ORDER BY link_type) AS link_type_key,
+            link_type
+        FROM (
+            SELECT DISTINCT {lt_expr} AS link_type FROM events
+        )
+    """)
+
+    # ── dim_component ──
+    comp_expr = col_expr(component_col, "'(unknown)'")
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE dim_component AS
+        SELECT
+            ROW_NUMBER() OVER (ORDER BY component_name) AS component_key,
+            component_name
+        FROM (
+            SELECT DISTINCT {comp_expr} AS component_name FROM events
+        )
+    """)
+
+    # ── fact_clicks ──
+    # Build org hash expression for joining
+    if has_hr:
+        org_hash_expr = "MD5(" + " || '|' || ".join([f"COALESCE(e.{f}, '')" for f in available_hr]) + ")"
+        org_join = f"LEFT JOIN dim_organization dorg ON {org_hash_expr} = dorg.org_hash"
+    else:
+        org_join = "CROSS JOIN dim_organization dorg"
+
+    # Build column expressions for optional CP_ fields
+    la_expr = f'e."{link_address_col}" AS link_address' if link_address_col else "NULL AS link_address"
+    ll_expr = f'e."{link_label_col}" AS link_label' if link_label_col else "NULL AS link_label"
+    fn_expr = f'e."{file_name_col}" AS file_name' if file_name_col else "NULL AS file_name"
+    ft_expr = f'e."{file_type_col}" AS file_type' if file_type_col else "NULL AS file_type"
+
+    # Site join expressions
+    sid_join = f'COALESCE(e."{site_id_col}", \'\')' if site_id_col else "''"
+    sname_join = f'COALESCE(e."{site_name_col}", \'\')' if site_name_col else "''"
+
+    # Page join expressions
+    pid_join = f'COALESCE(e."{page_id_col}", \'\')' if page_id_col else "''"
+    pname_join = f'COALESCE(e."{page_name_col}", \'\')' if page_name_col else "''"
+    purl_join = f'COALESCE(e."{page_url_col}", \'\')' if page_url_col else "''"
+    ctype_join = f'COALESCE(e."{content_type_col}", \'\')' if content_type_col else "''"
+    pstat_join = f'COALESCE(e."{page_status_col}", \'\')' if page_status_col else "''"
+
+    # Link type / component join expressions
+    lt_join = f"COALESCE(e.\"{link_type_col}\", '(unknown)')" if link_type_col else "'(unknown)'"
+    comp_join = f"COALESCE(e.\"{component_col}\", '(unknown)')" if component_col else "'(unknown)'"
+
+    # GPN anonymization — SHA-256 hash, same as events_anonymized
+    gpn_hash_expr = "sha256(CAST(e.gpn AS VARCHAR))::VARCHAR" if 'gpn' in events_cols else "NULL"
+
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE fact_clicks AS
+        SELECT
+            dd.date_key,
+            dorg.org_key,
+            ds.site_key,
+            dp.page_key,
+            dlt.link_type_key,
+            dc.component_key,
+            {gpn_hash_expr} AS person_hash,
+            e.user_id,
+            e.session_id,
+            e.session_key,
+            e.timestamp,
+            e.timestamp_cet,
+            e.event_order,
+            e.prev_event,
+            e.ms_since_prev_event,
+            e.sec_since_prev_event,
+            e.time_since_prev_bucket,
+            e.event_hour,
+            e.event_weekday,
+            {la_expr},
+            {ll_expr},
+            {fn_expr},
+            {ft_expr},
+            e.name AS event_name,
+            e.client_CountryOrRegion AS client_country
+        FROM events e
+        LEFT JOIN dim_date dd ON e.session_date = dd.date_value
+        {org_join}
+        LEFT JOIN dim_site ds
+            ON {sid_join} = ds.site_id AND {sname_join} = ds.site_name
+        LEFT JOIN dim_page dp
+            ON {pid_join} = dp.page_id AND {pname_join} = dp.page_name
+            AND {purl_join} = dp.page_url AND {ctype_join} = dp.content_type
+            AND {pstat_join} = dp.page_status
+        LEFT JOIN dim_link_type dlt ON {lt_join} = dlt.link_type
+        LEFT JOIN dim_component dc ON {comp_join} = dc.component_name
+    """)
+
+    # Export all CDM tables to Parquet
+    cdm_tables = ['dim_date', 'dim_organization', 'dim_site', 'dim_page',
+                  'dim_link_type', 'dim_component', 'fact_clicks']
+
+    for table in cdm_tables:
+        out_file = cdm_dir / f'{table}.parquet'
+        if out_file.exists():
+            out_file.unlink()
+        con.execute(f"COPY {table} TO '{out_file}' (FORMAT PARQUET, COMPRESSION SNAPPY)")
+        row_count = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        size_mb = os.path.getsize(out_file) / (1024 * 1024)
+        log(f"  {table}.parquet ({row_count:,} rows, {size_mb:.1f} MB)")
+
+    log("CDM export complete.")
+
+
 def print_summary(con, output_dir=None):
     """Print comprehensive processing summary."""
     log("")
@@ -711,6 +959,15 @@ def print_summary(con, output_dir=None):
             for pf in parquet_files:
                 size_mb = os.path.getsize(pf) / (1024 * 1024)
                 log(f"    {pf.name:<40s} ({size_mb:.1f} MB)")
+
+        cdm_dir = Path(output_dir) / 'cdm'
+        cdm_files = sorted(cdm_dir.glob('*.parquet')) if cdm_dir.exists() else []
+        if cdm_files:
+            log("\n  CDM STAR-SCHEMA FILES")
+            log("  " + "-" * 60)
+            for pf in cdm_files:
+                size_mb = os.path.getsize(pf) / (1024 * 1024)
+                log(f"    cdm/{pf.name:<36s} ({size_mb:.1f} MB)")
 
     # --- Date range & volume ---
     overview = con.execute("""
@@ -975,6 +1232,9 @@ def process_clicks(input_file=None, full_refresh=False):
     # Export Parquet files
     export_parquet_files(con, output_dir)
 
+    # Export CDM star-schema tables
+    export_cdm_tables(con, output_dir)
+
     # Print summary
     print_summary(con, output_dir)
 
@@ -983,6 +1243,9 @@ def process_clicks(input_file=None, full_refresh=False):
     db_size_before = os.path.getsize(db_path) / (1024 * 1024)
     con.execute("DROP TABLE IF EXISTS hr_history")
     con.execute("DROP TABLE IF EXISTS events_raw")
+    for cdm_table in ['dim_date', 'dim_organization', 'dim_site', 'dim_page',
+                       'dim_link_type', 'dim_component', 'fact_clicks']:
+        con.execute(f"DROP TABLE IF EXISTS {cdm_table}")
     con.execute("VACUUM")
     con.execute("CHECKPOINT")
     db_size_after = os.path.getsize(db_path) / (1024 * 1024)
