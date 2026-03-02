@@ -1,0 +1,95 @@
+// ============================================================================
+// Clicks Query - Flatten ALL click_event data from Application Insights
+// ============================================================================
+// Purpose: Extract and flatten click_event data from Application Insights
+//          customEvents table. Unlike the CampaignWe query, this captures
+//          ALL intranet clicks without filtering on a specific page.
+//
+// Data Structure:
+//   Top-level columns: timestamp, name, user_Id, session_Id, client_CountryOrRegion
+//   customDimensions:  Contains ONE key: "CustomProps" (JSON string)
+//   CustomProps keys:  SiteID, SiteName, PageId, PageName, PageURL, PageStatus,
+//                      ComponentName, ContentOwner, ContentType, Email, GPN,
+//                      FileName_Label, FileType_Label, Link_Type, Link_address,
+//                      Link_ancestors, Link_label, NewsCategory, PublishingDate
+//
+// Output: All CustomProps keys become columns with CP_ prefix.
+//
+// HOW TO USE: Copy from "set truncationmaxrecords" to "order by"
+//
+// NOTE: 'timestamp [UTC]' is formatted as 'dd/MM/yyyy HH:mm:ss.fffffff' to preserve
+//       millisecond precision for CSV export (Excel truncates the native format).
+// ============================================================================
+
+
+// === COPY FROM HERE ===
+set truncationmaxrecords = 500000;
+let TimeRange = 90d;
+let CustomPropsPrefix = "CP_";
+let ClickData = customEvents
+    | where timestamp >= ago(TimeRange)
+    | where name == 'click_event'
+    | extend cd = todynamic(customDimensions)
+    // --- customDimensions has ONE key: CustomProps (JSON string with all fields) ---
+    | extend CustomPropsRaw = tostring(cd.CustomProps)
+    | extend CP = iff(isnotempty(CustomPropsRaw) and CustomPropsRaw startswith "{", todynamic(CustomPropsRaw), dynamic({}))
+    | serialize
+    | extend rowId = row_number()
+    // --- Expand CustomProps keys (flat key-value pairs) ---
+    | extend cpKeys = bag_keys(CP)
+    | extend cpKeys = iff(array_length(cpKeys) == 0, dynamic(["__no_cp__"]), cpKeys)
+    | mv-expand cpKey = cpKeys to typeof(string)
+    | extend cpValue = tostring(CP[cpKey])
+    // --- Build flattened key-value pairs with CP_ prefix ---
+    | extend kvBag = iff(cpKey == "__no_cp__", dynamic({}), pack(strcat(CustomPropsPrefix, cpKey), cpValue))
+    // --- Reaggregate back to one row per event ---
+    | summarize take_any(timestamp), take_any(name), take_any(client_CountryOrRegion), take_any(user_Id), take_any(session_Id), merged = make_bag(kvBag) by rowId
+    | extend finalBag = coalesce(merged, dynamic({}));
+ClickData
+| evaluate bag_unpack(finalBag)
+| project-away rowId, merged
+| extend ['timestamp [UTC]'] = format_datetime(timestamp, 'dd/MM/yyyy HH:mm:ss.fffffff')
+| project-away timestamp
+| project-reorder ['timestamp [UTC]'], name, client_CountryOrRegion, user_Id, session_Id
+| order by ['timestamp [UTC]'] desc
+// === COPY TO HERE ===
+
+
+// ============================================================================
+// ALTERNATIVE QUERIES (copy/paste separately)
+// ============================================================================
+
+// --- QUERY A: Key discovery - find all unique CustomProps keys ---
+// customEvents | where timestamp >= ago(30d) | where name == 'click_event' | extend cd = todynamic(customDimensions) | extend CP = todynamic(tostring(cd.CustomProps)) | extend cpKeys = bag_keys(CP) | mv-expand cpKey = cpKeys to typeof(string) | summarize KeyCount = count(), SampleValue = take_any(tostring(CP[cpKey])) by Key = cpKey | order by KeyCount desc
+
+// --- QUERY B: Simplified version (no CP_ prefix, just unpack CustomProps) ---
+// customEvents | where timestamp >= ago(30d) | where name == 'click_event' | extend cd = todynamic(customDimensions) | extend CP = todynamic(tostring(cd.CustomProps)) | evaluate bag_unpack(CP) | project-reorder timestamp, name | order by timestamp desc
+
+// --- QUERY C: Filter by specific email (change EmailFilter value) ---
+set truncationmaxrecords = 500000;
+let TimeRange = 90d;
+let EmailFilter = "john.doe";
+let CustomPropsPrefix = "CP_";
+let ClickData = customEvents
+    | where timestamp >= ago(TimeRange)
+    | where name == 'click_event'
+    | extend cd = todynamic(customDimensions)
+    | extend CustomPropsRaw = tostring(cd.CustomProps)
+    | extend CP = iff(isnotempty(CustomPropsRaw) and CustomPropsRaw startswith "{", todynamic(CustomPropsRaw), dynamic({}))
+    | where tostring(CP.Email) contains EmailFilter
+    | serialize
+    | extend rowId = row_number()
+    | extend cpKeys = bag_keys(CP)
+    | extend cpKeys = iff(array_length(cpKeys) == 0, dynamic(["__no_cp__"]), cpKeys)
+    | mv-expand cpKey = cpKeys to typeof(string)
+    | extend cpValue = tostring(CP[cpKey])
+    | extend kvBag = iff(cpKey == "__no_cp__", dynamic({}), pack(strcat(CustomPropsPrefix, cpKey), cpValue))
+    | summarize take_any(timestamp), take_any(name), take_any(client_CountryOrRegion), take_any(user_Id), take_any(session_Id), merged = make_bag(kvBag) by rowId
+    | extend finalBag = coalesce(merged, dynamic({}));
+ClickData
+| evaluate bag_unpack(finalBag)
+| project-away rowId, merged
+| extend ['timestamp [UTC]'] = format_datetime(timestamp, 'dd/MM/yyyy HH:mm:ss.fffffff')
+| project-away timestamp
+| project-reorder ['timestamp [UTC]'], name, client_CountryOrRegion, user_Id, session_Id
+| order by ['timestamp [UTC]'] desc

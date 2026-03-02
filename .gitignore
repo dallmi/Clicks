@@ -1,0 +1,15 @@
+# Input files (KQL exports, too large for git)
+input/*.xlsx
+input/*.xls
+input/*.csv
+
+# Data files (DuckDB)
+data/*.db
+data/*.db.wal
+
+# Output files
+output/*.parquet
+
+# Python
+__pycache__/
+*.pyc

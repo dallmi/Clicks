@@ -1,0 +1,223 @@
+// ============================================================================
+// Clicks Explorer - Exploratory KQL queries for intranet click analytics
+// ============================================================================
+// Purpose: Understand the landscape of ALL intranet click events.
+//          Each query is independently runnable — copy/paste one at a time.
+//
+// Queries:
+//   0. Volume overview
+//   1. Event name discovery
+//   2. CustomProps key inventory
+//   3. Link Type distribution
+//   4. Link Type × Link Label samples
+//   5. Link Type × ComponentName cross-tab
+//   6. Page URL patterns (top 50)
+//   7. SiteName distribution
+//   8. ContentType × Link Type cross-tab
+//   9. Link Address domain analysis
+//  10. FileType distribution
+//  11. Daily volume trend
+//  12. Raw sample (10 events)
+// ============================================================================
+
+
+// ---------------------------------------------------------------------------
+// 0. VOLUME OVERVIEW — total events, unique users, sessions, date range
+// ---------------------------------------------------------------------------
+customEvents
+| where timestamp >= ago(90d)
+| where name == 'click_event'
+| summarize
+    TotalEvents = count(),
+    UniqueUsers = dcount(user_Id),
+    UniqueSessions = dcount(session_Id),
+    FirstEvent = min(timestamp),
+    LastEvent = max(timestamp),
+    Countries = dcount(client_CountryOrRegion)
+
+
+// ---------------------------------------------------------------------------
+// 1. EVENT NAME DISCOVERY — what event types exist besides click_event?
+// ---------------------------------------------------------------------------
+customEvents
+| where timestamp >= ago(90d)
+| summarize EventCount = count() by name
+| order by EventCount desc
+
+
+// ---------------------------------------------------------------------------
+// 2. CUSTOMPROPS KEY INVENTORY — all keys with occurrence count & sample value
+// ---------------------------------------------------------------------------
+customEvents
+| where timestamp >= ago(30d)
+| where name == 'click_event'
+| extend cd = todynamic(customDimensions)
+| extend CP = todynamic(tostring(cd.CustomProps))
+| extend cpKeys = bag_keys(CP)
+| mv-expand cpKey = cpKeys to typeof(string)
+| summarize
+    KeyCount = count(),
+    DistinctValues = dcount(tostring(CP[cpKey])),
+    SampleValue = take_any(tostring(CP[cpKey]))
+    by Key = cpKey
+| order by KeyCount desc
+
+
+// ---------------------------------------------------------------------------
+// 3. LINK TYPE DISTRIBUTION — how clicks break down by Link_Type
+// ---------------------------------------------------------------------------
+customEvents
+| where timestamp >= ago(90d)
+| where name == 'click_event'
+| extend cd = todynamic(customDimensions)
+| extend CP = todynamic(tostring(cd.CustomProps))
+| extend LinkType = tostring(CP.Link_Type)
+| summarize
+    EventCount = count(),
+    UniqueUsers = dcount(user_Id),
+    UniqueSessions = dcount(session_Id)
+    by LinkType
+| extend Pct = round(100.0 * EventCount / toscalar(
+    customEvents | where timestamp >= ago(90d) | where name == 'click_event' | count
+  ), 2)
+| order by EventCount desc
+
+
+// ---------------------------------------------------------------------------
+// 4. LINK TYPE × LINK LABEL SAMPLES — understand what each link type means
+// ---------------------------------------------------------------------------
+customEvents
+| where timestamp >= ago(30d)
+| where name == 'click_event'
+| extend cd = todynamic(customDimensions)
+| extend CP = todynamic(tostring(cd.CustomProps))
+| extend LinkType = tostring(CP.Link_Type),
+         LinkLabel = tostring(CP.Link_label)
+| summarize
+    SampleLabels = make_set(LinkLabel, 5),
+    EventCount = count()
+    by LinkType
+| order by EventCount desc
+
+
+// ---------------------------------------------------------------------------
+// 5. LINK TYPE × COMPONENT NAME CROSS-TAB — which components generate which link types
+// ---------------------------------------------------------------------------
+customEvents
+| where timestamp >= ago(90d)
+| where name == 'click_event'
+| extend cd = todynamic(customDimensions)
+| extend CP = todynamic(tostring(cd.CustomProps))
+| extend LinkType = tostring(CP.Link_Type),
+         Component = tostring(CP.ComponentName)
+| summarize EventCount = count() by LinkType, Component
+| order by EventCount desc
+| take 50
+
+
+// ---------------------------------------------------------------------------
+// 6. PAGE URL PATTERNS — top 50 most-clicked pages
+// ---------------------------------------------------------------------------
+customEvents
+| where timestamp >= ago(90d)
+| where name == 'click_event'
+| extend cd = todynamic(customDimensions)
+| extend CP = todynamic(tostring(cd.CustomProps))
+| extend PageURL = tostring(CP.PageURL)
+| summarize
+    EventCount = count(),
+    UniqueUsers = dcount(user_Id)
+    by PageURL
+| order by EventCount desc
+| take 50
+
+
+// ---------------------------------------------------------------------------
+// 7. SITENAME DISTRIBUTION — which intranet sites generate the most clicks
+// ---------------------------------------------------------------------------
+customEvents
+| where timestamp >= ago(90d)
+| where name == 'click_event'
+| extend cd = todynamic(customDimensions)
+| extend CP = todynamic(tostring(cd.CustomProps))
+| extend SiteName = tostring(CP.SiteName)
+| summarize
+    EventCount = count(),
+    UniqueUsers = dcount(user_Id),
+    UniquePages = dcount(tostring(CP.PageURL))
+    by SiteName
+| order by EventCount desc
+
+
+// ---------------------------------------------------------------------------
+// 8. CONTENTTYPE × LINK TYPE CROSS-TAB — what content types are clicked and how
+// ---------------------------------------------------------------------------
+customEvents
+| where timestamp >= ago(90d)
+| where name == 'click_event'
+| extend cd = todynamic(customDimensions)
+| extend CP = todynamic(tostring(cd.CustomProps))
+| extend ContentType = tostring(CP.ContentType),
+         LinkType = tostring(CP.Link_Type)
+| summarize EventCount = count() by ContentType, LinkType
+| order by EventCount desc
+| take 50
+
+
+// ---------------------------------------------------------------------------
+// 9. LINK ADDRESS DOMAIN ANALYSIS — internal vs external link targets
+// ---------------------------------------------------------------------------
+customEvents
+| where timestamp >= ago(90d)
+| where name == 'click_event'
+| extend cd = todynamic(customDimensions)
+| extend CP = todynamic(tostring(cd.CustomProps))
+| extend LinkAddress = tostring(CP.Link_address)
+| extend Domain = extract(@"https?://([^/]+)", 1, LinkAddress)
+| summarize
+    EventCount = count(),
+    UniqueLinks = dcount(LinkAddress)
+    by Domain
+| order by EventCount desc
+| take 30
+
+
+// ---------------------------------------------------------------------------
+// 10. FILETYPE DISTRIBUTION — what file types are being downloaded/clicked
+// ---------------------------------------------------------------------------
+customEvents
+| where timestamp >= ago(90d)
+| where name == 'click_event'
+| extend cd = todynamic(customDimensions)
+| extend CP = todynamic(tostring(cd.CustomProps))
+| extend FileType = tostring(CP.FileType_Label)
+| where isnotempty(FileType)
+| summarize
+    EventCount = count(),
+    UniqueUsers = dcount(user_Id),
+    SampleFiles = make_set(tostring(CP.FileName_Label), 3)
+    by FileType
+| order by EventCount desc
+
+
+// ---------------------------------------------------------------------------
+// 11. DAILY VOLUME TREND — timechart of clicks per day
+// ---------------------------------------------------------------------------
+customEvents
+| where timestamp >= ago(90d)
+| where name == 'click_event'
+| summarize DailyClicks = count() by bin(timestamp, 1d)
+| order by timestamp asc
+| render timechart
+
+
+// ---------------------------------------------------------------------------
+// 12. RAW SAMPLE — 10 events with full CustomProps for structure inspection
+// ---------------------------------------------------------------------------
+customEvents
+| where timestamp >= ago(7d)
+| where name == 'click_event'
+| extend cd = todynamic(customDimensions)
+| extend CP = todynamic(tostring(cd.CustomProps))
+| project timestamp, name, user_Id, session_Id, client_CountryOrRegion, CP
+| take 10
