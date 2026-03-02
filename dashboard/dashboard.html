@@ -1,0 +1,1467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clicks Analytics Dashboard</title>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+    <!-- ExcelJS for styled XLSX export -->
+    <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+
+    <!-- DuckDB WASM -->
+    <script type="module">
+        import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.28.0/+esm';
+        window.duckdb = duckdb;
+        window.dispatchEvent(new Event('duckdb-ready'));
+    </script>
+
+    <style>
+        :root {
+            --primary: #E60000;
+            --primary-dark: #8A000A;
+            --black: #000000;
+            --dark-gray: #404040;
+            --medium-gray: #7A7870;
+            --light-gray: #CCCABC;
+            --lighter-gray: #ECEBE4;
+            --row-alt: #F8F7F2;
+            --white: #FFFFFF;
+            --success: #6F7A1A;
+            --success-light: #F0F2E6;
+            --warning: #E4A911;
+            --warning-light: #FDF6E3;
+            --danger: #BD000C;
+            --danger-light: #FFEBE6;
+            --info: #8E8D83;
+            --info-light: #ECEBE4;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background-color: var(--lighter-gray);
+            color: var(--dark-gray);
+            line-height: 1.5;
+        }
+
+        .header {
+            background: var(--white);
+            color: var(--black);
+            padding: 0.75rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--light-gray);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            padding-left: 0.75rem;
+            border-left: 3px solid var(--primary);
+        }
+
+        .header-controls { display: flex; gap: 1rem; align-items: center; }
+
+        .date-filter { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+        .date-filter.loading { opacity: 0.4; pointer-events: none; }
+
+        .date-presets {
+            display: flex; gap: 0; border: 1px solid var(--light-gray);
+            border-radius: 4px; overflow: hidden; margin-right: 0.5rem;
+        }
+
+        .date-preset {
+            padding: 0.35rem 0.6rem; background: var(--white); border: none;
+            border-right: 1px solid var(--light-gray); cursor: pointer;
+            font-size: 0.75rem; color: var(--medium-gray); white-space: nowrap; transition: all 0.15s;
+        }
+        .date-preset:last-child { border-right: none; }
+        .date-preset:hover { background: var(--lighter-gray); color: var(--dark-gray); }
+        .date-preset.active { background: var(--primary); color: var(--white); }
+
+        .date-filter label { font-size: 0.8rem; color: var(--medium-gray); }
+        .date-filter input { padding: 0.4rem 0.5rem; border: 1px solid var(--light-gray); border-radius: 4px; font-size: 0.8rem; }
+        .date-filter input:focus { outline: none; border-color: var(--primary); }
+
+        .status-indicator {
+            display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem;
+            padding: 0.25rem 0.5rem; border-radius: 4px; transition: opacity 0.3s;
+        }
+        .status-indicator.loading { color: var(--medium-gray); }
+        .status-indicator.success { color: var(--success); }
+        .status-indicator.error { color: var(--danger); }
+        .status-indicator .dot { width: 6px; height: 6px; border-radius: 50%; }
+        .status-indicator.loading .dot { background: var(--warning); animation: pulse 1s infinite; }
+        .status-indicator.success .dot { background: var(--success); }
+        .status-indicator.error .dot { background: var(--danger); }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+        .container { max-width: 1800px; margin: 0 auto; padding: 1rem; }
+
+        .nav-tabs {
+            display: flex; gap: 0; background: var(--white);
+            border-radius: 8px 8px 0 0; border-bottom: 2px solid var(--light-gray);
+            margin-bottom: 0; overflow-x: auto;
+        }
+
+        .nav-tab {
+            padding: 0.75rem 1.25rem; background: transparent; border: none;
+            cursor: pointer; font-size: 0.85rem; font-weight: 500; color: var(--medium-gray);
+            border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.2s; white-space: nowrap;
+        }
+        .nav-tab:hover { color: var(--dark-gray); background: var(--lighter-gray); }
+        .nav-tab.active { color: var(--black); border-bottom-color: var(--primary); }
+
+        .nav-content { display: none; background: var(--white); border-radius: 0 0 8px 8px; padding: 1rem; }
+        .nav-content.active { display: block; }
+
+        .loading-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; gap: 1rem; }
+        .spinner { width: 40px; height: 40px; border: 3px solid var(--light-gray); border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-text { color: var(--medium-gray); font-size: 0.85rem; }
+
+        .active-filters { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+        .filter-tag {
+            display: inline-flex; align-items: center; gap: 0.25rem;
+            padding: 0.25rem 0.5rem; background: var(--info-light); color: var(--info);
+            border-radius: 4px; font-size: 0.7rem; font-weight: 500;
+        }
+        .filter-tag button { background: none; border: none; cursor: pointer; color: var(--info); font-size: 0.9rem; line-height: 1; padding: 0; margin-left: 0.25rem; }
+        .clear-filters { font-size: 0.7rem; color: var(--medium-gray); cursor: pointer; text-decoration: underline; }
+
+        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+        .kpi-card {
+            background: var(--white); border-radius: 6px; padding: 1rem;
+            border: 1px solid var(--light-gray); position: relative; transition: all 0.2s;
+        }
+        .kpi-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); transform: translateY(-1px); }
+        .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; border-radius: 6px 6px 0 0; }
+        .kpi-card.highlight::before { background: var(--primary); }
+        .kpi-card.success::before { background: var(--success); }
+        .kpi-card.warning::before { background: var(--warning); }
+        .kpi-card.danger::before { background: var(--danger); }
+        .kpi-card.info::before { background: var(--info); }
+        .kpi-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.3px; color: var(--medium-gray); margin-bottom: 0.25rem; }
+        .kpi-value { font-size: 1.5rem; font-weight: 700; color: var(--black); line-height: 1.2; }
+        .kpi-subtitle { font-size: 0.65rem; color: var(--medium-gray); margin-top: 0.25rem; }
+
+        .charts-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; margin-bottom: 1rem; }
+        .chart-card { background: var(--white); border-radius: 6px; padding: 1rem; border: 1px solid var(--light-gray); }
+        .chart-card.full-width { grid-column: 1 / -1; }
+        .chart-title {
+            font-size: 0.9rem; font-weight: 600; color: var(--dark-gray);
+            margin-bottom: 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--light-gray);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .chart-subtitle { font-size: 0.7rem; color: var(--medium-gray); font-weight: 400; }
+        .chart-container { height: 200px; position: relative; }
+        .chart-container.tall { height: 280px; }
+        .chart-container.xtall { height: 360px; }
+
+        .table-container { overflow-x: auto; max-height: 500px; overflow-y: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+        th { background: var(--lighter-gray); padding: 0.6rem 0.75rem; text-align: left; font-weight: 600; color: var(--dark-gray); border-bottom: 1px solid var(--light-gray); position: sticky; top: 0; z-index: 1; }
+        td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--light-gray); color: var(--dark-gray); }
+        tr:nth-child(even) td { background: var(--row-alt); }
+        tr:hover td { background: var(--lighter-gray); }
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+
+        .export-toolbar { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; justify-content: flex-end; }
+        .export-btn {
+            padding: 0.4rem 0.75rem; border: 1px solid var(--light-gray); border-radius: 4px;
+            font-size: 0.8rem; cursor: pointer; background: var(--white); color: var(--dark-gray);
+            font-weight: 500; transition: background 0.2s;
+        }
+        .export-btn:hover { background: var(--lighter-gray); border-color: var(--medium-gray); }
+        .export-btn-sm { padding: 0.2rem 0.5rem; font-size: 0.7rem; }
+
+        .heatmap-table { border-collapse: collapse; font-size: 0.75rem; width: 100%; }
+        .heatmap-table th { padding: 0.4rem 0.5rem; background: var(--lighter-gray); font-size: 0.7rem; white-space: nowrap; }
+        .heatmap-table td { padding: 0.4rem 0.5rem; text-align: center; border: 1px solid var(--white); font-weight: 500; min-width: 60px; }
+        .heatmap-table td.row-header { text-align: left; font-weight: 600; background: var(--lighter-gray); min-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 250px; }
+
+        .breadcrumb { display: flex; align-items: center; gap: 0.25rem; margin-bottom: 0.75rem; font-size: 0.8rem; flex-wrap: wrap; }
+        .breadcrumb-item { color: #0C7EC6; cursor: pointer; text-decoration: underline; }
+        .breadcrumb-item:hover { color: #07476F; }
+        .breadcrumb-sep { color: var(--medium-gray); }
+        .breadcrumb-current { color: var(--dark-gray); font-weight: 600; }
+
+        .error-message { background: var(--danger-light); color: var(--danger); padding: 1rem; border-radius: 6px; text-align: center; margin: 2rem; }
+
+        @media (max-width: 900px) {
+            .charts-grid { grid-template-columns: 1fr; }
+            .header { flex-direction: column; gap: 0.5rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Clicks Analytics Dashboard</h1>
+        <div class="header-controls">
+            <div class="date-filter loading" id="dateFilterControls">
+                <div class="date-presets">
+                    <button class="date-preset" data-preset="7d" onclick="applyDatePreset('7d')">Last 7 days</button>
+                    <button class="date-preset" data-preset="14d" onclick="applyDatePreset('14d')">Last 14 days</button>
+                    <button class="date-preset" data-preset="30d" onclick="applyDatePreset('30d')">Last 30 days</button>
+                    <button class="date-preset" data-preset="this-month" onclick="applyDatePreset('this-month')">This month</button>
+                    <button class="date-preset" data-preset="last-month" onclick="applyDatePreset('last-month')">Last month</button>
+                    <button class="date-preset" data-preset="ytd" onclick="applyDatePreset('ytd')">This year</button>
+                    <button class="date-preset" data-preset="all" onclick="applyDatePreset('all')">All time</button>
+                </div>
+                <label>From:</label>
+                <input type="date" id="dateFrom" onchange="applyCustomDate()">
+                <label>To:</label>
+                <input type="date" id="dateTo" onchange="applyCustomDate()">
+            </div>
+            <button class="export-btn" onclick="exportAllTabs(event)" style="padding:0.3rem 0.8rem;font-weight:600;cursor:pointer;">Export XLSX</button>
+            <div class="status-indicator loading" id="statusIndicator">
+                <div class="dot"></div>
+                <span id="statusText">Loading...</span>
+            </div>
+        </div>
+    </div>
+
+    <main class="container">
+        <!-- Loading -->
+        <div class="loading-screen" id="loadingState">
+            <div class="spinner"></div>
+            <div class="loading-text" id="loadingText">Initializing DuckDB...</div>
+        </div>
+
+        <!-- Dashboard -->
+        <div id="dashboardContent" style="display: none;">
+
+            <!-- Active filters -->
+            <div class="active-filters" id="activeFilters" style="display: none;"></div>
+
+            <!-- Tabs -->
+            <div class="nav-tabs">
+                <button class="nav-tab active" onclick="switchTab('tabOverview')">Overview</button>
+                <button class="nav-tab" onclick="switchTab('tabClickTypes')">Click Types</button>
+                <button class="nav-tab" onclick="switchTab('tabSitesPages')">Sites & Pages</button>
+                <button class="nav-tab" onclick="switchTab('tabDivisions')">Divisions & Regions</button>
+                <button class="nav-tab" onclick="switchTab('tabSessions')">Session Behavior</button>
+                <button class="nav-tab" onclick="switchTab('tabQuality')">Data Quality</button>
+            </div>
+
+            <!-- TAB 1: Overview -->
+            <div class="nav-content active" id="tabOverview">
+                <div class="kpi-grid" id="kpiGrid"></div>
+                <div class="charts-grid">
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Daily Activity <span class="chart-subtitle">Clicks & unique users over time (CET)</span></div>
+                        <div class="chart-container tall"><canvas id="chartDailyTrends"></canvas></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-title">Clicks by Hour <span class="chart-subtitle">CET</span></div>
+                        <div class="chart-container"><canvas id="chartHourly"></canvas></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-title">Clicks by Weekday <span class="chart-subtitle">CET</span></div>
+                        <div class="chart-container"><canvas id="chartWeekday"></canvas></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Activity Heatmap <span class="chart-subtitle">Weekday × Hour (CET)</span></div>
+                        <div class="table-container" id="weekdayHourlyHeatmap"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 2: Click Types -->
+            <div class="nav-content" id="tabClickTypes">
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <div class="chart-title">Link Type Distribution <span class="chart-subtitle">Click to filter</span></div>
+                        <div class="chart-container tall"><canvas id="chartLinkTypeDoughnut"></canvas></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-title">Link Types — Volume</div>
+                        <div class="chart-container tall"><canvas id="chartLinkTypeBar"></canvas></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Link Type × Component
+                            <button class="export-btn export-btn-sm" onclick="exportTable('linkTypeComponent','xlsx')">Export XLSX</button>
+                        </div>
+                        <div class="table-container" id="linkTypeComponentHeatmap"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-title">Top External Link Targets
+                            <button class="export-btn export-btn-sm" onclick="exportTable('topExternalLinks','xlsx')">Export XLSX</button>
+                        </div>
+                        <div class="table-container" id="topExternalLinksTable"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-title">Top Internal Link Targets
+                            <button class="export-btn export-btn-sm" onclick="exportTable('topInternalLinks','xlsx')">Export XLSX</button>
+                        </div>
+                        <div class="table-container" id="topInternalLinksTable"></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Download Analysis
+                            <button class="export-btn export-btn-sm" onclick="exportTable('downloads','xlsx')">Export XLSX</button>
+                        </div>
+                        <div class="charts-grid" style="margin-bottom:0">
+                            <div class="chart-container tall"><canvas id="chartFileTypes"></canvas></div>
+                            <div class="table-container" id="topDownloadsTable"></div>
+                        </div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Top 20 Components by Click Volume <span class="chart-subtitle">Click to filter</span></div>
+                        <div class="chart-container xtall"><canvas id="chartComponents"></canvas></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Content Type × Link Type
+                            <button class="export-btn export-btn-sm" onclick="exportTable('contentTypeLinkType','xlsx')">Export XLSX</button>
+                        </div>
+                        <div class="table-container" id="contentTypeLinkTypeHeatmap"></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Avg Click Timing by Link Type <span class="chart-subtitle">Mean ms since previous event</span></div>
+                        <div class="chart-container"><canvas id="chartTimingByLinkType"></canvas></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 3: Sites & Pages -->
+            <div class="nav-content" id="tabSitesPages">
+                <div class="charts-grid">
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Top 20 Sites by Click Volume <span class="chart-subtitle">Click to filter by site</span></div>
+                        <div class="chart-container xtall"><canvas id="chartTopSites"></canvas></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Top 30 Pages by Click Volume</div>
+                        <div class="chart-container xtall"><canvas id="chartTopPages"></canvas></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Site × Link Type
+                            <button class="export-btn export-btn-sm" onclick="exportTable('siteLinkType','xlsx')">Export XLSX</button>
+                        </div>
+                        <div class="table-container" id="siteLinkTypeHeatmap"></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Pages Detail
+                            <button class="export-btn export-btn-sm" onclick="exportTable('pagesDetail','xlsx')">Export XLSX</button>
+                        </div>
+                        <div class="table-container" id="pagesDetailTable"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 4: Divisions & Regions -->
+            <div class="nav-content" id="tabDivisions">
+                <div class="charts-grid">
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Business Division — Clicks <span class="chart-subtitle">Click bars to drill down</span></div>
+                        <div id="gcrsBreadcrumb" class="breadcrumb"></div>
+                        <div class="chart-container xtall"><canvas id="chartGcrsDrill"></canvas></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Region → Country — Clicks <span class="chart-subtitle">Click bars to drill into countries</span></div>
+                        <div id="regionBreadcrumb" class="breadcrumb"></div>
+                        <div class="chart-container xtall"><canvas id="chartRegDrill"></canvas></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Daily Users — Top 5 Divisions</div>
+                        <div class="chart-container tall"><canvas id="chartDivDaily"></canvas></div>
+                    </div>
+                </div>
+                <div class="chart-card full-width" style="margin-top: 1rem;">
+                    <div class="chart-title">Engagement by Division</div>
+                    <div class="table-container" id="divDepthTable"></div>
+                </div>
+            </div>
+
+            <!-- TAB 5: Session Behavior -->
+            <div class="nav-content" id="tabSessions">
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <div class="chart-title">Session Depth <span class="chart-subtitle">Clicks per session</span></div>
+                        <div class="chart-container"><canvas id="chartSessionDepth"></canvas></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-title">Click Timing <span class="chart-subtitle">Time between consecutive clicks</span></div>
+                        <div class="chart-container"><canvas id="chartTimingDist"></canvas></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Top Click Sequences
+                            <button class="export-btn export-btn-sm" onclick="exportTable('clickSequences','xlsx')">Export XLSX</button>
+                        </div>
+                        <div class="table-container" id="clickSequencesTable"></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Session Duration Distribution <span class="chart-subtitle">Minutes (multi-click sessions only)</span></div>
+                        <div class="chart-container"><canvas id="chartSessionDuration"></canvas></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 6: Data Quality -->
+            <div class="nav-content" id="tabQuality">
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <div class="chart-title">GPN → HR Mapping Coverage</div>
+                        <div class="chart-container"><canvas id="chartGpnCoverage"></canvas></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-title">GPN Length Distribution</div>
+                        <div class="chart-container"><canvas id="chartGpnLength"></canvas></div>
+                    </div>
+                </div>
+                <div class="chart-card full-width" style="margin-top: 1rem;">
+                    <div class="chart-title">Unmatched GPNs</div>
+                    <div class="table-container" id="unmatchedGpnTable"></div>
+                </div>
+                <div class="chart-card full-width" style="margin-top: 1rem;">
+                    <div class="chart-title">Field Coverage</div>
+                    <div class="table-container" id="fieldCoverageTable"></div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <script>
+        // =====================================================================
+        // GLOBAL STATE
+        // =====================================================================
+        let db = null, conn = null;
+        let dateFilter = { from: null, to: null };
+        let activeFilters = {};
+        let charts = {};
+        let tableData = {};
+        let renderInProgress = false;
+
+        // =====================================================================
+        // COLORS
+        // =====================================================================
+        const COLORS = {
+            primary: '#E60000', primaryDark: '#8A000A',
+            success: '#6F7A1A', warning: '#E4A911', danger: '#BD000C',
+            info: '#8E8D83', gray: '#7A7870', lightGray: '#CCCABC', dark: '#404040',
+        };
+
+        const CHART_PALETTE = [
+            '#AF8626','#00759E','#879420','#4B2D58','#9F8865',
+            '#2E476B','#469A6C','#AD3E4A','#8489BD','#0C7EC6',
+            '#654D16','#804C95','#45999C','#4972AC','#CC707A',
+            '#295B40','#545A9C','#785E4A','#07476F','#620004'
+        ];
+
+        const HEATMAP_STOPS = ['#FFFFFF','#F5F0E1','#E4A911','#E60000','#8A000A'];
+
+        // =====================================================================
+        // EXCEL EXPORT STYLES & UTILITIES
+        // =====================================================================
+        const EXCEL_STYLES = {
+            headerFill:      { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF404040' } },
+            headerFont:      { bold: true, color: { argb: 'FFFFFFFF' }, size: 10, name: 'Calibri' },
+            headerAlignment: { vertical: 'middle', horizontal: 'left', wrapText: true },
+            headerBorder:    { bottom: { style: 'thin', color: { argb: 'FFCCCABC' } } },
+            rowAltFill:      { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8F7F2' } },
+            dataFont:        { size: 10, name: 'Calibri', color: { argb: 'FF404040' } },
+            subtitleFont:    { bold: true, size: 11, color: { argb: 'FF404040' }, name: 'Calibri' },
+            numAlign:        { vertical: 'middle', horizontal: 'right' },
+            textAlign:       { vertical: 'middle', horizontal: 'left' },
+        };
+
+        function rgbToArgb(colorStr) {
+            if (colorStr.startsWith('#')) return 'FF' + colorStr.slice(1).toUpperCase();
+            const m = colorStr.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+            if (m) return 'FF' + [m[1], m[2], m[3]].map(v => parseInt(v).toString(16).padStart(2, '0')).join('').toUpperCase();
+            return 'FF000000';
+        }
+
+        function downloadExcelBuffer(buffer, filename) {
+            const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = filename; a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 10000);
+        }
+
+        function autoSizeColumns(ws) {
+            ws.columns.forEach(col => {
+                let maxLen = 10;
+                col.eachCell({ includeEmpty: false }, cell => {
+                    const len = cell.value ? String(cell.value).length : 0;
+                    if (len > maxLen) maxLen = len;
+                });
+                col.width = Math.min(maxLen + 2, 50);
+            });
+        }
+
+        function addSectionTitle(ws, row, title, colSpan) {
+            const span = colSpan || 10;
+            const cell = ws.getRow(row).getCell(1);
+            cell.value = title;
+            cell.font = EXCEL_STYLES.subtitleFont;
+            if (span > 1) ws.mergeCells(row, 1, row, span);
+            return row + 1;
+        }
+
+        function addStyledTable(ws, startRow, headers, rows, options) {
+            const opts = options || {};
+            const rightAlign = opts.rightAlign || [];
+            const isHeatmap = !!opts.isHeatmap;
+            const maxVal = opts.maxVal || 0;
+            const hdr = ws.getRow(startRow);
+            headers.forEach((h, i) => {
+                const c = hdr.getCell(i + 1);
+                c.value = h;
+                c.fill = EXCEL_STYLES.headerFill;
+                c.font = EXCEL_STYLES.headerFont;
+                c.alignment = rightAlign[i] ? { ...EXCEL_STYLES.numAlign, wrapText: true } : EXCEL_STYLES.headerAlignment;
+                c.border = EXCEL_STYLES.headerBorder;
+            });
+            hdr.height = 22;
+            rows.forEach((row, ri) => {
+                const exRow = ws.getRow(startRow + 1 + ri);
+                row.forEach((val, ci) => {
+                    const c = exRow.getCell(ci + 1);
+                    c.value = val;
+                    c.font = EXCEL_STYLES.dataFont;
+                    c.alignment = rightAlign[ci] ? EXCEL_STYLES.numAlign : EXCEL_STYLES.textAlign;
+                    if (ri % 2 === 1) c.fill = EXCEL_STYLES.rowAltFill;
+                    if (isHeatmap && ci > 0 && typeof val === 'number' && val > 0) {
+                        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rgbToArgb(heatColor(val, maxVal)) } };
+                        c.font = { ...EXCEL_STYLES.dataFont, color: { argb: rgbToArgb(textColorForBg(val, maxVal)) } };
+                    }
+                });
+            });
+            return startRow + 1 + rows.length + 1;
+        }
+
+        function addChartImage(wb, ws, chartKey, startRow, startCol, endCol, rowSpan) {
+            const chart = charts[chartKey];
+            if (!chart) return startRow;
+            try {
+                const b64 = chart.toBase64Image('image/png', 2);
+                const data = b64.split(',')[1];
+                if (!data) return startRow;
+                const canvas = chart.canvas;
+                const colWidth = endCol - startCol;
+                const pxPerCol = 64;
+                const imgW = canvas.width, imgH = canvas.height;
+                const displayW = colWidth * pxPerCol;
+                const displayH = imgH * (displayW / imgW);
+                const pxPerRow = 15;
+                const calcSpan = Math.ceil(displayH / pxPerRow) + 2;
+                const finalSpan = Math.max(rowSpan, calcSpan);
+                const imgId = wb.addImage({ base64: data, extension: 'png' });
+                ws.addImage(imgId, { tl: { col: startCol, row: startRow }, br: { col: endCol, row: startRow + finalSpan }, editAs: 'oneCell' });
+                return startRow + finalSpan + 2;
+            } catch (e) { console.warn('Chart image export failed for', chartKey, e); }
+            return startRow + rowSpan + 2;
+        }
+
+        // --- Per-tab worksheet composers ---
+        function buildOverviewSheet(wb) {
+            const ws = wb.addWorksheet('Overview');
+            let r = 1;
+            r = addSectionTitle(ws, r, 'Overview', 10); r++;
+            if (tableData.kpis) { r = addSectionTitle(ws, r, 'Key Performance Indicators'); r = addStyledTable(ws, r, tableData.kpis.headers, tableData.kpis.rows); }
+            r = addSectionTitle(ws, r, 'Daily Activity');
+            r = addChartImage(wb, ws, 'dailyTrends', r, 0, 10, 20);
+            r = addSectionTitle(ws, r, 'Clicks by Hour / Clicks by Weekday');
+            const sr = r;
+            addChartImage(wb, ws, 'hourly', sr, 0, 5, 15);
+            r = addChartImage(wb, ws, 'weekday', sr, 5, 10, 15);
+            if (tableData.weekdayHourly) {
+                const cols = tableData.weekdayHourly.headers.length;
+                r = addSectionTitle(ws, r, 'Activity Heatmap (Weekday × Hour)', cols);
+                r = addStyledTable(ws, r, tableData.weekdayHourly.headers, tableData.weekdayHourly.rows, { isHeatmap: true, maxVal: tableData.weekdayHourly.maxVal, rightAlign: [false, ...Array(24).fill(true)] });
+            }
+            autoSizeColumns(ws);
+        }
+
+        function buildClickTypesSheet(wb) {
+            const ws = wb.addWorksheet('Click Types');
+            let r = 1;
+            r = addSectionTitle(ws, r, 'Click Types', 10); r++;
+            r = addSectionTitle(ws, r, 'Link Type Distribution / Volume');
+            const sr = r;
+            addChartImage(wb, ws, 'linkTypeDoughnut', sr, 0, 5, 15);
+            r = addChartImage(wb, ws, 'linkTypeBar', sr, 5, 10, 15);
+            if (tableData.linkTypeComponent) {
+                const cols = tableData.linkTypeComponent.headers.length;
+                r = addSectionTitle(ws, r, 'Link Type × Component', cols);
+                r = addStyledTable(ws, r, tableData.linkTypeComponent.headers, tableData.linkTypeComponent.rows, { isHeatmap: true, maxVal: tableData.linkTypeComponent.maxVal, rightAlign: [false, ...Array(cols-1).fill(true)] });
+            }
+            if (tableData.topExternalLinks) { r = addSectionTitle(ws, r, 'Top External Link Targets'); r = addStyledTable(ws, r, tableData.topExternalLinks.headers, tableData.topExternalLinks.rows, { rightAlign: tableData.topExternalLinks.rightAlign }); }
+            if (tableData.topInternalLinks) { r = addSectionTitle(ws, r, 'Top Internal Link Targets'); r = addStyledTable(ws, r, tableData.topInternalLinks.headers, tableData.topInternalLinks.rows, { rightAlign: tableData.topInternalLinks.rightAlign }); }
+            if (tableData.downloads) { r = addSectionTitle(ws, r, 'Downloads'); r = addStyledTable(ws, r, tableData.downloads.headers, tableData.downloads.rows, { rightAlign: tableData.downloads.rightAlign }); }
+            r = addSectionTitle(ws, r, 'Top 20 Components');
+            r = addChartImage(wb, ws, 'components', r, 0, 10, 30);
+            if (tableData.contentTypeLinkType) {
+                const cols = tableData.contentTypeLinkType.headers.length;
+                r = addSectionTitle(ws, r, 'Content Type × Link Type', cols);
+                r = addStyledTable(ws, r, tableData.contentTypeLinkType.headers, tableData.contentTypeLinkType.rows, { isHeatmap: true, maxVal: tableData.contentTypeLinkType.maxVal, rightAlign: [false, ...Array(cols-1).fill(true)] });
+            }
+            r = addSectionTitle(ws, r, 'Avg Click Timing by Link Type');
+            r = addChartImage(wb, ws, 'timingByLinkType', r, 0, 10, 15);
+            autoSizeColumns(ws);
+        }
+
+        function buildSitesPagesSheet(wb) {
+            const ws = wb.addWorksheet('Sites & Pages');
+            let r = 1;
+            r = addSectionTitle(ws, r, 'Sites & Pages', 10); r++;
+            r = addSectionTitle(ws, r, 'Top Sites');
+            r = addChartImage(wb, ws, 'topSites', r, 0, 10, 30);
+            r = addSectionTitle(ws, r, 'Top Pages');
+            r = addChartImage(wb, ws, 'topPages', r, 0, 10, 30);
+            if (tableData.siteLinkType) {
+                const cols = tableData.siteLinkType.headers.length;
+                r = addSectionTitle(ws, r, 'Site × Link Type', cols);
+                r = addStyledTable(ws, r, tableData.siteLinkType.headers, tableData.siteLinkType.rows, { isHeatmap: true, maxVal: tableData.siteLinkType.maxVal, rightAlign: [false, ...Array(cols-1).fill(true)] });
+            }
+            if (tableData.pagesDetail) { r = addSectionTitle(ws, r, 'Pages Detail'); r = addStyledTable(ws, r, tableData.pagesDetail.headers, tableData.pagesDetail.rows, { rightAlign: tableData.pagesDetail.rightAlign }); }
+            autoSizeColumns(ws);
+        }
+
+        function buildDivisionsSheet(wb) {
+            const ws = wb.addWorksheet('Divisions & Regions');
+            let r = 1;
+            r = addSectionTitle(ws, r, 'Divisions & Regions', 10); r++;
+            r = addSectionTitle(ws, r, 'Business Division — Clicks');
+            r = addChartImage(wb, ws, 'gcrsDrill', r, 0, 10, 35);
+            r = addSectionTitle(ws, r, 'Region / Country — Clicks');
+            r = addChartImage(wb, ws, 'regDrill', r, 0, 10, 35);
+            r = addSectionTitle(ws, r, 'Daily Users — Top 5 Divisions');
+            r = addChartImage(wb, ws, 'divDaily', r, 0, 10, 20);
+            if (tableData.divDepth) {
+                r = addSectionTitle(ws, r, 'Engagement by Division');
+                r = addStyledTable(ws, r, tableData.divDepth.headers, tableData.divDepth.rows, { rightAlign: tableData.divDepth.rightAlign });
+            }
+            autoSizeColumns(ws);
+        }
+
+        function buildSessionsSheet(wb) {
+            const ws = wb.addWorksheet('Session Behavior');
+            let r = 1;
+            r = addSectionTitle(ws, r, 'Session Behavior', 10); r++;
+            r = addSectionTitle(ws, r, 'Session Depth / Click Timing');
+            const sr = r;
+            addChartImage(wb, ws, 'sessionDepth', sr, 0, 5, 15);
+            r = addChartImage(wb, ws, 'timingDist', sr, 5, 10, 15);
+            if (tableData.clickSequences) { r = addSectionTitle(ws, r, 'Top Click Sequences'); r = addStyledTable(ws, r, tableData.clickSequences.headers, tableData.clickSequences.rows, { rightAlign: tableData.clickSequences.rightAlign }); }
+            r = addSectionTitle(ws, r, 'Session Duration');
+            r = addChartImage(wb, ws, 'sessionDuration', r, 0, 10, 15);
+            autoSizeColumns(ws);
+        }
+
+        function buildDataQualitySheet(wb) {
+            const ws = wb.addWorksheet('Data Quality');
+            let r = 1;
+            r = addSectionTitle(ws, r, 'Data Quality', 10); r++;
+            r = addSectionTitle(ws, r, 'GPN Coverage / Length Distribution');
+            const sr = r;
+            addChartImage(wb, ws, 'gpnCoverage', sr, 0, 5, 15);
+            r = addChartImage(wb, ws, 'gpnLength', sr, 5, 10, 15);
+            if (tableData.unmatchedGpns) { r = addSectionTitle(ws, r, 'Unmatched GPNs'); r = addStyledTable(ws, r, tableData.unmatchedGpns.headers, tableData.unmatchedGpns.rows, { rightAlign: [false,true,true,false,false,false] }); }
+            if (tableData.fieldCoverage) { r = addSectionTitle(ws, r, 'Field Coverage'); r = addStyledTable(ws, r, tableData.fieldCoverage.headers, tableData.fieldCoverage.rows, { rightAlign: [false, true, true, true] }); }
+            autoSizeColumns(ws);
+        }
+
+        // --- Export orchestrators ---
+        async function exportAllTabs(evt) {
+            const btn = evt && evt.target;
+            const origText = btn ? btn.textContent : '';
+            try {
+                if (btn) { btn.textContent = 'Exporting…'; btn.disabled = true; }
+                const wb = new ExcelJS.Workbook();
+                wb.creator = 'Clicks Dashboard'; wb.created = new Date();
+                const activeTabId = document.querySelector('.nav-content.active')?.id;
+                const allTabIds = ['tabOverview','tabClickTypes','tabSitesPages','tabDivisions','tabSessions','tabQuality'];
+                allTabIds.forEach(id => { const el = document.getElementById(id); el.classList.add('active'); el.style.display = 'block'; });
+                await new Promise(r => setTimeout(r, 300));
+                try {
+                    buildOverviewSheet(wb); buildClickTypesSheet(wb); buildSitesPagesSheet(wb);
+                    buildDivisionsSheet(wb); buildSessionsSheet(wb); buildDataQualitySheet(wb);
+                } finally {
+                    allTabIds.forEach(id => { const el = document.getElementById(id); el.classList.remove('active'); el.style.display = ''; });
+                    if (activeTabId) document.getElementById(activeTabId).classList.add('active');
+                }
+                const buffer = await wb.xlsx.writeBuffer();
+                downloadExcelBuffer(buffer, `clicks_dashboard_${fmtDate(dateFilter.from)}_${fmtDate(dateFilter.to)}.xlsx`);
+            } catch (err) { console.error('Export failed:', err); alert('Export failed: ' + err.message); }
+            finally { if (btn) { btn.textContent = origText; btn.disabled = false; } }
+        }
+
+        async function exportTable(key, format) {
+            const data = tableData[key];
+            if (!data || !data.headers || !data.rows || data.rows.length === 0) return;
+            const prefix = `clicks_${key}_${fmtDate(dateFilter.from)}_${fmtDate(dateFilter.to)}`;
+            try {
+                const wb = new ExcelJS.Workbook();
+                const ws = wb.addWorksheet(key);
+                addStyledTable(ws, 1, data.headers, data.rows, {
+                    isHeatmap: !!data.isHeatmap, maxVal: data.maxVal || 0, rightAlign: data.rightAlign || []
+                });
+                autoSizeColumns(ws);
+                const buffer = await wb.xlsx.writeBuffer();
+                downloadExcelBuffer(buffer, prefix + '.xlsx');
+            } catch (err) { console.error('XLSX export failed:', err); alert('XLSX export failed: ' + err.message); }
+        }
+
+        // GCRS hierarchy drilldown
+        const GCRS_LEVELS = ['hr_division','hr_unit','hr_area','hr_sector','hr_segment','hr_function'];
+        const GCRS_LABELS = ['Division','Unit','Area','Sector','Segment','Function'];
+        let gcrsLevel = 0;
+        let gcrsFilters = [];
+
+        // Region → Country drilldown
+        const REGION_LEVELS = ['hr_region', 'hr_country'];
+        const REGION_LABELS = ['Region', 'Country'];
+        let regionLevel = 0;
+        let regionFilter = null;
+
+        // =====================================================================
+        // INIT
+        // =====================================================================
+        async function init() {
+            try {
+                updateStatus('loading', 'Waiting for DuckDB...');
+                if (!window.duckdb) {
+                    await Promise.race([
+                        new Promise(r => window.addEventListener('duckdb-ready', r, { once: true })),
+                        new Promise((_, rej) => setTimeout(() => rej(new Error('DuckDB failed to load after 30s.')), 30000))
+                    ]);
+                }
+                setLoadingText('Initializing DuckDB...');
+                const m = window.duckdb;
+                const bundles = m.getJsDelivrBundles();
+                const bundle = await m.selectBundle(bundles);
+                const wurl = URL.createObjectURL(new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' }));
+                const worker = new Worker(wurl);
+                const logger = new m.ConsoleLogger();
+                db = new m.AsyncDuckDB(logger, worker);
+                await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+                URL.revokeObjectURL(wurl);
+                conn = await db.connect();
+                setLoadingText('Loading data files...');
+                await loadParquetFiles();
+                await setInitialDateRange();
+                document.getElementById('loadingState').style.display = 'none';
+                document.getElementById('dashboardContent').style.display = 'block';
+                document.getElementById('dateFilterControls').classList.remove('loading');
+                await renderDashboard();
+            } catch (err) {
+                console.error('Init error:', err);
+                document.getElementById('loadingState').innerHTML = `<div class="error-message">Failed to initialize: ${err.message}</div>`;
+                updateStatus('error', 'Error');
+            }
+        }
+
+        async function loadParquetFiles() {
+            const base = window.location.origin + window.location.pathname.replace(/\/[^\/]*$/, '');
+            const paths = [`${base}/../output/`, `${window.location.origin}/output/`, `${base}/output/`];
+            async function load(view, file, msg) {
+                for (const p of paths) {
+                    try { await conn.query(`CREATE VIEW ${view} AS SELECT * FROM read_parquet('${p}${file}')`); setLoadingText(msg); return; }
+                    catch(e) { /* try next */ }
+                }
+                throw new Error(`Could not find ${file}`);
+            }
+            await load('events', 'events_raw.parquet', 'Loaded events...');
+        }
+
+        // =====================================================================
+        // DATE RANGE
+        // =====================================================================
+        async function setInitialDateRange() {
+            const r = await conn.query(`SELECT MIN(session_date) as mn, MAX(session_date) as mx FROM events`);
+            const row = r.toArray()[0];
+            if (row && row.mn != null) { dateFilter.from = new Date(row.mn); dateFilter.to = new Date(row.mx); }
+            else { const today = new Date(); dateFilter.to = today; dateFilter.from = new Date(today); dateFilter.from.setDate(today.getDate() - 30); }
+            document.getElementById('dateFrom').value = fmtDate(dateFilter.from);
+            document.getElementById('dateTo').value = fmtDate(dateFilter.to);
+        }
+
+        function fmtDate(d) { return d.toISOString().split('T')[0]; }
+
+        function getDateWhere(col = 'session_date') {
+            if (!dateFilter.from || !dateFilter.to) return '1=1';
+            return `${col} >= '${fmtDate(dateFilter.from)}' AND ${col} <= '${fmtDate(dateFilter.to)}'`;
+        }
+
+        async function applyDatePreset(preset) {
+            const today = new Date(); let from, to;
+            switch (preset) {
+                case '7d': to = today; from = new Date(today); from.setDate(from.getDate() - 6); break;
+                case '14d': to = today; from = new Date(today); from.setDate(from.getDate() - 13); break;
+                case '30d': to = today; from = new Date(today); from.setDate(from.getDate() - 29); break;
+                case 'this-month': from = new Date(today.getFullYear(), today.getMonth(), 1); to = today; break;
+                case 'last-month': from = new Date(today.getFullYear(), today.getMonth()-1, 1); to = new Date(today.getFullYear(), today.getMonth(), 0); break;
+                case 'ytd': from = new Date(today.getFullYear(), 0, 1); to = today; break;
+                case 'all': { const r = await conn.query('SELECT MIN(session_date) as mn, MAX(session_date) as mx FROM events'); const row = r.toArray()[0]; from = new Date(row.mn); to = new Date(row.mx); break; }
+            }
+            dateFilter.from = from; dateFilter.to = to;
+            document.getElementById('dateFrom').value = fmtDate(from);
+            document.getElementById('dateTo').value = fmtDate(to);
+            document.querySelectorAll('.date-preset').forEach(b => b.classList.toggle('active', b.dataset.preset === preset));
+            await renderDashboard();
+        }
+
+        async function applyCustomDate() {
+            const f = document.getElementById('dateFrom').value;
+            const t = document.getElementById('dateTo').value;
+            if (f && t) { dateFilter.from = new Date(f); dateFilter.to = new Date(t); document.querySelectorAll('.date-preset').forEach(b => b.classList.remove('active')); await renderDashboard(); }
+        }
+
+        // =====================================================================
+        // FILTERS
+        // =====================================================================
+        function getFilterWhere() {
+            const clauses = [];
+            for (const f of Object.values(activeFilters)) {
+                const v = String(f.value);
+                if (v === '(null)' || v === '(blank)') { clauses.push(`${f.column} IS NULL`); }
+                else { clauses.push(`${f.column} = '${v.replace(/'/g, "''")}'`); }
+            }
+            return clauses.length ? ' AND ' + clauses.join(' AND ') : '';
+        }
+
+        function toggleFilter(label, value, column) {
+            if (activeFilters[label] && activeFilters[label].value === value) { delete activeFilters[label]; }
+            else { activeFilters[label] = { value, column }; }
+            updateFiltersDisplay(); renderDashboard();
+        }
+
+        function removeFilter(key) { delete activeFilters[key]; updateFiltersDisplay(); renderDashboard(); }
+        function clearAllFilters() { activeFilters = {}; updateFiltersDisplay(); renderDashboard(); }
+
+        function updateFiltersDisplay() {
+            const el = document.getElementById('activeFilters');
+            const entries = Object.entries(activeFilters);
+            if (entries.length === 0) { el.style.display = 'none'; return; }
+            el.style.display = 'flex';
+            el.innerHTML = entries.map(([k, f]) =>
+                `<div class="filter-tag"><span>${k}: ${f.value}</span><button onclick="removeFilter('${k}')">&times;</button></div>`
+            ).join('') + `<span class="clear-filters" onclick="clearAllFilters()">Clear all</span>`;
+        }
+
+        // =====================================================================
+        // TAB SWITCHING & HELPERS
+        // =====================================================================
+        function switchTab(id) {
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.nav-content').forEach(c => c.classList.remove('active'));
+            document.querySelector(`[onclick="switchTab('${id}')"]`)?.classList.add('active');
+            document.getElementById(id)?.classList.add('active');
+        }
+
+        function setLoadingText(t) { document.getElementById('loadingText').textContent = t; }
+        function updateStatus(type, msg) {
+            const el = document.getElementById('statusIndicator');
+            el.className = 'status-indicator ' + type;
+            document.getElementById('statusText').textContent = msg;
+        }
+
+        function fmtNum(n) {
+            if (n == null) return '-';
+            n = Number(n);
+            if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+            if (n >= 1000) return (n/1000).toFixed(1) + 'K';
+            return n.toLocaleString();
+        }
+
+        function destroyChart(name) { if (charts[name]) { charts[name].destroy(); delete charts[name]; } }
+
+        function heatColor(val, max) {
+            if (!max || val === 0) return '#FFFFFF';
+            const t = Math.min(val / max, 1);
+            const stops = [[255,255,255],[245,240,225],[228,169,17],[230,0,0],[138,0,10]];
+            const seg = t * (stops.length - 1);
+            const i = Math.min(Math.floor(seg), stops.length - 2);
+            const f = seg - i;
+            const r = Math.round(stops[i][0] + f * (stops[i+1][0] - stops[i][0]));
+            const g = Math.round(stops[i][1] + f * (stops[i+1][1] - stops[i][1]));
+            const b = Math.round(stops[i][2] + f * (stops[i+1][2] - stops[i][2]));
+            return `rgb(${r},${g},${b})`;
+        }
+
+        function textColorForBg(val, max) { return (max && val > max * 0.5) ? '#FFFFFF' : '#404040'; }
+        function toDateStr(v) { const d = v instanceof Date ? v : new Date(v); if (!isNaN(d)) return d.toISOString().split('T')[0]; const s = String(v); return s.includes('T') ? s.split('T')[0] : s; }
+        function formatNumber(num) { if (num === null || num === undefined) return '\u2014'; return Number(num).toLocaleString('en-US', { maximumFractionDigits: 0 }); }
+        function pct(value, total) { if (!total) return '0.0'; return (value / total * 100).toFixed(1); }
+        function pctArray(values) { const total = values.reduce((a, b) => a + b, 0); return values.map(v => pct(v, total)); }
+
+        function barLabelPlugin(values, pcts, options = {}) {
+            const { horizontal = false, minBarSize = 25 } = options;
+            return { afterDatasetsDraw(chart) { const c = chart.ctx; c.save(); const meta = chart.getDatasetMeta(0); meta.data.forEach((bar, i) => { if (horizontal) { const barLeft = chart.scales.x.getPixelForValue(0); const barWidth = bar.x - barLeft; if (barWidth > 50) { c.font = '11px -apple-system, sans-serif'; c.fillStyle = '#fff'; c.textBaseline = 'middle'; c.textAlign = 'right'; c.fillText(`${pcts[i]}%`, bar.x - 6, bar.y); } c.font = '11px -apple-system, sans-serif'; c.fillStyle = '#5A5D5C'; c.textBaseline = 'middle'; c.textAlign = 'left'; const ol = barWidth > 50 ? formatNumber(values[i]) : `${formatNumber(values[i])} (${pcts[i]}%)`; c.fillText(ol, bar.x + 6, bar.y); } else { const barTop = bar.y; const barBottom = chart.scales.y.getPixelForValue(0); const barHeight = barBottom - barTop; c.font = '10px -apple-system, sans-serif'; c.fillStyle = '#5A5D5C'; c.textAlign = 'center'; c.textBaseline = 'bottom'; const tl = barHeight > minBarSize ? formatNumber(values[i]) : `${formatNumber(values[i])} (${pcts[i]}%)`; c.fillText(tl, bar.x, barTop - 4); if (barHeight > minBarSize) { c.fillStyle = '#fff'; c.textBaseline = 'top'; c.fillText(`${pcts[i]}%`, bar.x, barTop + 4); } } }); c.restore(); } };
+        }
+
+        function groupedBarLabelPlugin(datasets, horizontal = true) {
+            return { afterDatasetsDraw(chart) { const c = chart.ctx; c.save(); datasets.forEach((ds, di) => { const meta = chart.getDatasetMeta(di); meta.data.forEach((bar, i) => { const val = ds.values[i]; if (!val) return; if (horizontal) { const barLeft = chart.scales.x.getPixelForValue(0); const barWidth = bar.x - barLeft; if (barWidth > 50) { c.font = '10px -apple-system, sans-serif'; c.fillStyle = '#fff'; c.textBaseline = 'middle'; c.textAlign = 'right'; c.fillText(`${ds.pcts[i]}%`, bar.x - 4, bar.y); } c.font = '10px -apple-system, sans-serif'; c.fillStyle = '#5A5D5C'; c.textBaseline = 'middle'; c.textAlign = 'left'; const ol = barWidth > 50 ? formatNumber(val) : `${formatNumber(val)} (${ds.pcts[i]}%)`; c.fillText(ol, bar.x + 4, bar.y); } else { const barTop = bar.y; const barBottom = chart.scales.y.getPixelForValue(0); const barHeight = barBottom - barTop; c.font = '10px -apple-system, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'bottom'; if (barHeight > 25) { c.fillStyle = '#5A5D5C'; c.fillText(formatNumber(val), bar.x, barTop - 4); c.fillStyle = '#fff'; c.textBaseline = 'top'; c.fillText(`${ds.pcts[i]}%`, bar.x, barTop + 4); } else if (barHeight > 0) { c.fillStyle = '#5A5D5C'; c.fillText(`${formatNumber(val)} (${ds.pcts[i]}%)`, bar.x, barTop - 4); } } }); }); c.restore(); } };
+        }
+
+        function doughnutLegendLabels(values, pcts) {
+            return { generateLabels: (chart) => { const ds = chart.data.datasets[0]; return chart.data.labels.map((label, i) => ({ text: `${label}  ${formatNumber(values[i])} (${pcts[i]}%)`, fillStyle: ds.backgroundColor[i], strokeStyle: ds.backgroundColor[i], hidden: false, index: i })); } };
+        }
+
+        async function q(sql) { return (await conn.query(sql)).toArray(); }
+        function kpiCard(label, value, type, subtitle) { return `<div class="kpi-card ${type}"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div>${subtitle ? `<div class="kpi-subtitle">${subtitle}</div>` : ''}</div>`; }
+
+        // =====================================================================
+        // RENDER ORCHESTRATION
+        // =====================================================================
+        async function renderDashboard() {
+            if (renderInProgress) return;
+            renderInProgress = true;
+            updateStatus('loading', 'Refreshing...');
+            try {
+                const tasks = [
+                    renderKPIs, renderDailyTrends, renderHourly, renderWeekday, renderWeekdayHourly,
+                    renderLinkTypeDoughnut, renderLinkTypeBar, renderLinkTypeComponentHeatmap,
+                    renderTopExternalLinks, renderTopInternalLinks, renderDownloadAnalysis, renderComponents,
+                    renderContentTypeLinkTypeHeatmap, renderTimingByLinkType,
+                    renderTopSites, renderTopPages, renderSiteLinkTypeHeatmap, renderPagesDetail,
+                    renderGcrsDrill, renderRegDrill, renderDivDaily, renderDivDepthTable,
+                    renderSessionDepth, renderTimingDist, renderClickSequences, renderSessionDuration,
+                    renderGpnCoverage, renderGpnLength, renderUnmatchedGpns, renderFieldCoverage
+                ];
+                const results = await Promise.allSettled(tasks.map(fn => fn()));
+                const fails = results.filter(r => r.status === 'rejected');
+                if (fails.length) { console.error('Render failures:', fails.map(f => f.reason)); updateStatus('warning', `${fails.length} section(s) failed`); }
+                else {
+                    try {
+                        const latest = await q(`SELECT MAX(timestamp_cet) as latest FROM events`);
+                        const ts = latest[0]?.latest;
+                        if (ts) { const d = new Date(ts); const label = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); updateStatus('success', `Latest data: ${label}`); }
+                        else { updateStatus('success', 'Ready'); }
+                    } catch(e) { updateStatus('success', 'Ready'); }
+                }
+            } finally { renderInProgress = false; }
+        }
+
+        // =====================================================================
+        // TAB 1: OVERVIEW
+        // =====================================================================
+        async function renderKPIs() {
+            const data = await q(`
+                SELECT COUNT(*) as events, COUNT(DISTINCT gpn) as users, COUNT(DISTINCT session_key) as sessions,
+                       ROUND(COUNT(*) * 1.0 / NULLIF(COUNT(DISTINCT session_key), 0), 1) as clicks_per_session,
+                       ROUND(100.0 * CAST(SUM(CASE WHEN hr_division IS NOT NULL THEN 1 ELSE 0 END) AS INTEGER) / COUNT(*), 1) as hr_pct
+                FROM events WHERE ${getDateWhere()}${getFilterWhere()}
+            `);
+            const d = data[0] || {};
+            tableData.kpis = { headers: ['Metric', 'Value'], rows: [['Total Clicks', Number(d.events)||0], ['Unique Users', Number(d.users)||0], ['Sessions', Number(d.sessions)||0], ['Clicks/Session', Number(d.clicks_per_session)||0], ['HR Coverage %', Number(d.hr_pct)||0]] };
+            document.getElementById('kpiGrid').innerHTML = [
+                kpiCard('TOTAL CLICKS', fmtNum(d.events), 'highlight'),
+                kpiCard('UNIQUE USERS', fmtNum(d.users), 'info', 'Distinct GPNs'),
+                kpiCard('SESSIONS', fmtNum(d.sessions), 'info'),
+                kpiCard('CLICKS / SESSION', d.clicks_per_session ?? '-', 'warning'),
+                kpiCard('HR COVERAGE', (d.hr_pct ?? 0) + '%', 'success'),
+            ].join('');
+        }
+
+        async function renderDailyTrends() {
+            const data = await q(`SELECT session_date as date, COUNT(*) as events, COUNT(DISTINCT gpn) as users FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1 ORDER BY 1`);
+            destroyChart('dailyTrends');
+            charts.dailyTrends = new Chart(document.getElementById('chartDailyTrends').getContext('2d'), {
+                type: 'line',
+                data: { labels: data.map(d => new Date(d.date)), datasets: [
+                    { label: 'Clicks', data: data.map(d => Number(d.events)), borderColor: COLORS.dark, backgroundColor: 'rgba(64,64,64,0.08)', fill: true, tension: 0.3, yAxisID: 'y' },
+                    { label: 'Unique Users', data: data.map(d => Number(d.users)), borderColor: '#B8B3A2', backgroundColor: 'transparent', borderDash: [5, 5], tension: 0.3, yAxisID: 'y1' }
+                ]},
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } },
+                    scales: { x: { type: 'time', time: { unit: 'day' } }, y: { position: 'left', title: { display: true, text: 'Clicks' } }, y1: { position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'Users' } } } }
+            });
+        }
+
+        async function renderHourly() {
+            const data = await q(`SELECT event_hour as hour, COUNT(*) as cnt FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1 ORDER BY 1`);
+            const values = data.map(d => Number(d.cnt)); const pcts = pctArray(values);
+            destroyChart('hourly');
+            charts.hourly = new Chart(document.getElementById('chartHourly').getContext('2d'), {
+                type: 'bar', data: { labels: data.map(d => d.hour), datasets: [{ data: values, backgroundColor: '#5A5D5C', borderRadius: 2 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} (${pcts[ctx.dataIndex]}%)` } } }, scales: { y: { beginAtZero: true } } },
+                plugins: [barLabelPlugin(values, pcts)]
+            });
+        }
+
+        async function renderWeekday() {
+            const data = await q(`SELECT event_weekday as day, event_weekday_num as num, COUNT(*) as cnt FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1, 2 ORDER BY 2`);
+            const values = data.map(d => Number(d.cnt)); const pcts = pctArray(values);
+            destroyChart('weekday');
+            charts.weekday = new Chart(document.getElementById('chartWeekday').getContext('2d'), {
+                type: 'bar', data: { labels: data.map(d => d.day), datasets: [{ data: values, backgroundColor: data.map(d => Number(d.num) <= 5 ? '#5A5D5C' : COLORS.lightGray), borderRadius: 2 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} (${pcts[ctx.dataIndex]}%)` } } }, scales: { y: { beginAtZero: true } } },
+                plugins: [barLabelPlugin(values, pcts)]
+            });
+        }
+
+        async function renderWeekdayHourly() {
+            const data = await q(`SELECT event_weekday_num as wday, event_weekday as wday_name, event_hour as hour, COUNT(*) as cnt FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1, 2, 3`);
+            const dayLabels = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+            const hourLabels = Array.from({length: 24}, (_, i) => i);
+            const map = {}; let maxVal = 1;
+            data.forEach(d => { const key = d.wday + '_' + d.hour; const v = Number(d.cnt); map[key] = v; if (v > maxVal) maxVal = v; });
+            const getValue = (ri, ci) => map[(ri + 1) + '_' + ci] || 0;
+            tableData.weekdayHourly = { headers: ['Weekday', ...hourLabels.map(h => h + ':00')], rows: dayLabels.map((day, ri) => [day, ...hourLabels.map((_, ci) => getValue(ri, ci))]), isHeatmap: true, maxVal };
+            document.getElementById('weekdayHourlyHeatmap').innerHTML = renderHeatmapTable(dayLabels, hourLabels, getValue, maxVal);
+        }
+
+        // =====================================================================
+        // TAB 2: CLICK TYPES
+        // =====================================================================
+        async function renderLinkTypeDoughnut() {
+            const data = await q(`SELECT COALESCE(CP_Link_Type, '(blank)') as lt, COUNT(*) as cnt FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1 ORDER BY cnt DESC`);
+            const values = data.map(d => Number(d.cnt)); const pcts = pctArray(values);
+            const ltLabels = data.map(d => d.lt);
+            destroyChart('linkTypeDoughnut');
+            charts.linkTypeDoughnut = new Chart(document.getElementById('chartLinkTypeDoughnut').getContext('2d'), {
+                type: 'doughnut', data: { labels: ltLabels, datasets: [{ data: values, backgroundColor: data.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]) }] },
+                options: { responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { position: 'right', labels: doughnutLegendLabels(values, pcts) }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} (${pcts[ctx.dataIndex]}%)` } } },
+                    onClick: (evt, elems) => { if (elems.length) toggleFilter('Link Type', ltLabels[elems[0].index], 'CP_Link_Type'); }
+                }
+            });
+        }
+
+        async function renderLinkTypeBar() {
+            const data = await q(`SELECT COALESCE(CP_Link_Type, '(blank)') as lt, COUNT(*) as cnt FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1 ORDER BY cnt DESC`);
+            const values = data.map(d => Number(d.cnt)); const pcts = pctArray(values);
+            const ltLabels = data.map(d => d.lt);
+            destroyChart('linkTypeBar');
+            charts.linkTypeBar = new Chart(document.getElementById('chartLinkTypeBar').getContext('2d'), {
+                type: 'bar', data: { labels: ltLabels, datasets: [{ data: values, backgroundColor: '#5A5D5C', borderRadius: 2 }] },
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, layout: { padding: { right: 80 } },
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} (${pcts[ctx.dataIndex]}%)` } } },
+                    scales: { x: { display: false }, y: { grid: { display: false }, ticks: { font: { size: 11 } } } },
+                    onClick: (evt, elems) => { if (elems.length) toggleFilter('Link Type', ltLabels[elems[0].index], 'CP_Link_Type'); }
+                },
+                plugins: [barLabelPlugin(values, pcts, { horizontal: true })]
+            });
+        }
+
+        async function renderLinkTypeComponentHeatmap() {
+            const data = await q(`
+                WITH top_lt AS (SELECT COALESCE(CP_Link_Type,'(blank)') as lt FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 10),
+                     top_comp AS (SELECT COALESCE(CP_ComponentName,'(blank)') as comp FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 15)
+                SELECT COALESCE(CP_Link_Type,'(blank)') as lt, COALESCE(CP_ComponentName,'(blank)') as comp, COUNT(*) as cnt
+                FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND COALESCE(CP_Link_Type,'(blank)') IN (SELECT lt FROM top_lt) AND COALESCE(CP_ComponentName,'(blank)') IN (SELECT comp FROM top_comp)
+                GROUP BY 1, 2
+            `);
+            const lts = [...new Set(data.map(d => d.lt))];
+            const comps = [...new Set(data.map(d => d.comp))];
+            const map = {}; data.forEach(d => { map[d.lt + '|' + d.comp] = Number(d.cnt); });
+            const maxVal = Math.max(...data.map(d => Number(d.cnt)), 1);
+            const headers = ['Link Type', ...comps];
+            const rows = lts.map(lt => [lt, ...comps.map(c => map[lt + '|' + c] || 0)]);
+            tableData.linkTypeComponent = { headers, rows, isHeatmap: true, maxVal };
+            document.getElementById('linkTypeComponentHeatmap').innerHTML = renderHeatmapTable(lts, comps, (r, c) => map[lts[r] + '|' + comps[c]] || 0, maxVal);
+        }
+
+        async function renderTopExternalLinks() {
+            const data = await q(`
+                SELECT regexp_extract(CP_Link_address, 'https?://([^/]+)', 1) as domain, COUNT(*) as clicks, COUNT(DISTINCT gpn) as users
+                FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_Link_address IS NOT NULL AND regexp_extract(CP_Link_address, 'https?://([^/]+)', 1) != ''
+                GROUP BY 1 ORDER BY clicks DESC LIMIT 30
+            `);
+            const headers = ['Domain', 'Clicks', 'Users'];
+            const rows = data.map(d => [d.domain, Number(d.clicks), Number(d.users)]);
+            const rightAlign = [false, true, true];
+            tableData.topExternalLinks = { headers, rows, rightAlign };
+            document.getElementById('topExternalLinksTable').innerHTML = rows.length ? renderHTMLTable(headers, rows, rightAlign) : '<p style="padding:1rem;color:var(--medium-gray)">No external links found.</p>';
+        }
+
+        async function renderTopInternalLinks() {
+            const data = await q(`
+                SELECT COALESCE(CP_Link_label, '(blank)') as label, COALESCE(CP_Link_address, '') as target, COUNT(*) as clicks
+                FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_Link_address IS NOT NULL
+                GROUP BY 1, 2 ORDER BY clicks DESC LIMIT 30
+            `);
+            const headers = ['Label', 'Target', 'Clicks'];
+            const rows = data.map(d => [d.label, d.target.length > 80 ? d.target.substring(0, 80) + '…' : d.target, Number(d.clicks)]);
+            const rightAlign = [false, false, true];
+            tableData.topInternalLinks = { headers, rows, rightAlign };
+            document.getElementById('topInternalLinksTable').innerHTML = rows.length ? renderHTMLTable(headers, rows, rightAlign) : '<p style="padding:1rem;color:var(--medium-gray)">No links found.</p>';
+        }
+
+        async function renderDownloadAnalysis() {
+            const ftData = await q(`SELECT COALESCE(CP_FileType_Label, '(blank)') as file_type, COUNT(*) as cnt FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_FileType_Label IS NOT NULL GROUP BY 1 ORDER BY cnt DESC`);
+            const ftValues = ftData.map(d => Number(d.cnt)); const ftPcts = pctArray(ftValues);
+            destroyChart('fileTypes');
+            if (ftData.length > 0) {
+                charts.fileTypes = new Chart(document.getElementById('chartFileTypes').getContext('2d'), {
+                    type: 'bar', data: { labels: ftData.map(d => d.file_type), datasets: [{ data: ftValues, backgroundColor: ftData.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]), borderRadius: 2 }] },
+                    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, layout: { padding: { right: 80 } }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} (${ftPcts[ctx.dataIndex]}%)` } } }, scales: { x: { display: false }, y: { grid: { display: false } } } },
+                    plugins: [barLabelPlugin(ftValues, ftPcts, { horizontal: true })]
+                });
+            }
+            const dlData = await q(`SELECT COALESCE(CP_FileName_Label, '(unknown)') as file_name, COALESCE(CP_FileType_Label, '') as file_type, COUNT(*) as downloads, COUNT(DISTINCT gpn) as users FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_FileName_Label IS NOT NULL GROUP BY 1, 2 ORDER BY downloads DESC LIMIT 30`);
+            const headers = ['File Name', 'Type', 'Downloads', 'Users'];
+            const rows = dlData.map(d => [d.file_name, d.file_type, Number(d.downloads), Number(d.users)]);
+            const rightAlign = [false, false, true, true];
+            tableData.downloads = { headers, rows, rightAlign };
+            document.getElementById('topDownloadsTable').innerHTML = rows.length ? renderHTMLTable(headers, rows, rightAlign) : '<p style="padding:1rem;color:var(--medium-gray)">No downloads found.</p>';
+        }
+
+        async function renderComponents() {
+            const data = await q(`SELECT COALESCE(CP_ComponentName, '(blank)') as comp, COUNT(*) as cnt FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1 ORDER BY cnt DESC LIMIT 20`);
+            const values = data.map(d => Number(d.cnt)); const pcts = pctArray(values);
+            const compLabels = data.map(d => d.comp);
+            destroyChart('components');
+            charts.components = new Chart(document.getElementById('chartComponents').getContext('2d'), {
+                type: 'bar', data: { labels: compLabels, datasets: [{ data: values, backgroundColor: data.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]), borderRadius: 2 }] },
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, layout: { padding: { right: 80 } },
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} (${pcts[ctx.dataIndex]}%)` } } },
+                    scales: { x: { display: false }, y: { grid: { display: false }, ticks: { font: { size: 11 } } } },
+                    onClick: (evt, elems) => { if (elems.length) toggleFilter('Component', compLabels[elems[0].index], 'CP_ComponentName'); }
+                },
+                plugins: [barLabelPlugin(values, pcts, { horizontal: true })]
+            });
+        }
+
+        async function renderContentTypeLinkTypeHeatmap() {
+            const data = await q(`
+                WITH top_ct AS (SELECT COALESCE(CP_ContentType,'(blank)') as ct FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 10),
+                     top_lt AS (SELECT COALESCE(CP_Link_Type,'(blank)') as lt FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 10)
+                SELECT COALESCE(CP_ContentType,'(blank)') as ct, COALESCE(CP_Link_Type,'(blank)') as lt, COUNT(*) as cnt
+                FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND COALESCE(CP_ContentType,'(blank)') IN (SELECT ct FROM top_ct) AND COALESCE(CP_Link_Type,'(blank)') IN (SELECT lt FROM top_lt)
+                GROUP BY 1, 2
+            `);
+            const cts = [...new Set(data.map(d => d.ct))];
+            const lts = [...new Set(data.map(d => d.lt))];
+            const map = {}; data.forEach(d => { map[d.ct + '|' + d.lt] = Number(d.cnt); });
+            const maxVal = Math.max(...data.map(d => Number(d.cnt)), 1);
+            const headers = ['Content Type', ...lts];
+            const rows = cts.map(ct => [ct, ...lts.map(lt => map[ct + '|' + lt] || 0)]);
+            tableData.contentTypeLinkType = { headers, rows, isHeatmap: true, maxVal };
+            document.getElementById('contentTypeLinkTypeHeatmap').innerHTML = renderHeatmapTable(cts, lts, (r, c) => map[cts[r] + '|' + lts[c]] || 0, maxVal);
+        }
+
+        async function renderTimingByLinkType() {
+            const data = await q(`SELECT COALESCE(CP_Link_Type, '(blank)') as lt, ROUND(AVG(ms_since_prev_event), 0) as avg_ms FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND ms_since_prev_event IS NOT NULL GROUP BY 1 ORDER BY avg_ms DESC`);
+            const values = data.map(d => Number(d.avg_ms)); const pcts = pctArray(values);
+            destroyChart('timingByLinkType');
+            charts.timingByLinkType = new Chart(document.getElementById('chartTimingByLinkType').getContext('2d'), {
+                type: 'bar', data: { labels: data.map(d => d.lt), datasets: [{ data: values, backgroundColor: '#5A5D5C', borderRadius: 2 }] },
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, layout: { padding: { right: 80 } },
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} ms` } } },
+                    scales: { x: { display: false }, y: { grid: { display: false }, ticks: { font: { size: 11 } } } } },
+                plugins: [{ afterDatasetsDraw(chart) { const c = chart.ctx; c.save(); chart.getDatasetMeta(0).data.forEach((bar, i) => { c.font = '11px -apple-system, sans-serif'; c.fillStyle = '#5A5D5C'; c.textBaseline = 'middle'; c.textAlign = 'left'; c.fillText(`${formatNumber(values[i])} ms`, bar.x + 6, bar.y); }); c.restore(); } }]
+            });
+        }
+
+        // =====================================================================
+        // TAB 3: SITES & PAGES
+        // =====================================================================
+        async function renderTopSites() {
+            const data = await q(`SELECT COALESCE(CP_SiteName, '(unknown)') as site, COUNT(*) as clicks, COUNT(DISTINCT gpn) as users FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1 ORDER BY clicks DESC LIMIT 20`);
+            const values = data.map(d => Number(d.clicks)); const users = data.map(d => Number(d.users));
+            const clickPcts = pctArray(values); const userPcts = pctArray(users);
+            const siteLabels = data.map(d => d.site);
+            destroyChart('topSites');
+            charts.topSites = new Chart(document.getElementById('chartTopSites').getContext('2d'), {
+                type: 'bar',
+                data: { labels: siteLabels, datasets: [
+                    { label: 'Clicks', data: values, backgroundColor: '#404040', borderRadius: 2 },
+                    { label: 'Unique Users', data: users, backgroundColor: '#B8B3A2', borderRadius: 2 }
+                ]},
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, layout: { padding: { right: 90 } },
+                    plugins: { legend: { position: 'top', labels: { boxWidth: 12 } }, tooltip: { callbacks: { label: ctx => { const p = ctx.datasetIndex === 0 ? clickPcts : userPcts; return `${ctx.dataset.label}: ${formatNumber(ctx.raw)} (${p[ctx.dataIndex]}%)`; } } } },
+                    scales: { x: { display: false }, y: { grid: { display: false }, ticks: { font: { size: 11 } } } },
+                    onClick: (evt, elems) => { if (elems.length) toggleFilter('Site', siteLabels[elems[0].index], 'CP_SiteName'); }
+                },
+                plugins: [groupedBarLabelPlugin([{ values, pcts: clickPcts }, { values: users, pcts: userPcts }])]
+            });
+        }
+
+        async function renderTopPages() {
+            const data = await q(`SELECT COALESCE(CP_PageName, COALESCE(CP_PageURL, '(unknown)')) as page, COUNT(*) as clicks FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1 ORDER BY clicks DESC LIMIT 30`);
+            const values = data.map(d => Number(d.clicks)); const pcts = pctArray(values);
+            destroyChart('topPages');
+            charts.topPages = new Chart(document.getElementById('chartTopPages').getContext('2d'), {
+                type: 'bar', data: { labels: data.map(d => d.page.length > 60 ? d.page.substring(0, 60) + '…' : d.page), datasets: [{ data: values, backgroundColor: data.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]), borderRadius: 2 }] },
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, layout: { padding: { right: 80 } },
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} (${pcts[ctx.dataIndex]}%)` } } },
+                    scales: { x: { display: false }, y: { grid: { display: false }, ticks: { font: { size: 10 } } } } },
+                plugins: [barLabelPlugin(values, pcts, { horizontal: true })]
+            });
+        }
+
+        async function renderSiteLinkTypeHeatmap() {
+            const data = await q(`
+                WITH top_s AS (SELECT COALESCE(CP_SiteName,'(unknown)') as site FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 15),
+                     top_lt AS (SELECT COALESCE(CP_Link_Type,'(blank)') as lt FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 10)
+                SELECT COALESCE(CP_SiteName,'(unknown)') as site, COALESCE(CP_Link_Type,'(blank)') as lt, COUNT(*) as cnt
+                FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND COALESCE(CP_SiteName,'(unknown)') IN (SELECT site FROM top_s) AND COALESCE(CP_Link_Type,'(blank)') IN (SELECT lt FROM top_lt)
+                GROUP BY 1, 2
+            `);
+            const sites = [...new Set(data.map(d => d.site))];
+            const lts = [...new Set(data.map(d => d.lt))];
+            const map = {}; data.forEach(d => { map[d.site + '|' + d.lt] = Number(d.cnt); });
+            const maxVal = Math.max(...data.map(d => Number(d.cnt)), 1);
+            const headers = ['Site', ...lts];
+            const rows = sites.map(s => [s, ...lts.map(lt => map[s + '|' + lt] || 0)]);
+            tableData.siteLinkType = { headers, rows, isHeatmap: true, maxVal };
+            document.getElementById('siteLinkTypeHeatmap').innerHTML = renderHeatmapTable(sites, lts, (r, c) => map[sites[r] + '|' + lts[c]] || 0, maxVal);
+        }
+
+        async function renderPagesDetail() {
+            const data = await q(`
+                SELECT COALESCE(CP_PageName, '(unknown)') as page_name, COALESCE(CP_PageURL, '') as page_url,
+                       COUNT(*) as clicks, COUNT(DISTINCT gpn) as users, COUNT(DISTINCT CP_Link_Type) as link_types
+                FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1, 2 ORDER BY clicks DESC LIMIT 100
+            `);
+            const headers = ['Page', 'URL', 'Clicks', 'Users', 'Link Types'];
+            const rows = data.map(d => [d.page_name, d.page_url.length > 60 ? d.page_url.substring(0, 60) + '…' : d.page_url, Number(d.clicks), Number(d.users), Number(d.link_types)]);
+            const rightAlign = [false, false, true, true, true];
+            tableData.pagesDetail = { headers, rows, rightAlign };
+            document.getElementById('pagesDetailTable').innerHTML = renderSortableTable(headers, rows, rightAlign, 'pagesDetail', 2, 'desc');
+        }
+
+        // =====================================================================
+        // TAB 4: DIVISIONS & REGIONS
+        // =====================================================================
+        async function renderGcrsDrill() {
+            const currentCol = GCRS_LEVELS[gcrsLevel]; const currentLabel = GCRS_LABELS[gcrsLevel];
+            let drillWhere = '';
+            for (const f of gcrsFilters) drillWhere += ` AND ${GCRS_LEVELS[f.level]} = '${String(f.value).replace(/'/g, "''")}'`;
+            let colExists = true;
+            try { await q(`SELECT ${currentCol} FROM events LIMIT 1`); } catch(e) { colExists = false; }
+            if (!colExists) { destroyChart('gcrsDrill'); document.getElementById('gcrsBreadcrumb').innerHTML = buildGcrsBreadcrumb(currentLabel) + `<span style="color:var(--medium-gray);font-style:italic;margin-left:0.5rem">Column "${currentLabel}" not available</span>`; return; }
+            const data = await q(`SELECT COALESCE(${currentCol}, '(unknown)') as name, COUNT(*) as clicks, COUNT(DISTINCT gpn) as users FROM events WHERE ${getDateWhere()}${getFilterWhere()}${drillWhere} GROUP BY 1 ORDER BY clicks DESC LIMIT 20`);
+            document.getElementById('gcrsBreadcrumb').innerHTML = buildGcrsBreadcrumb(currentLabel);
+            destroyChart('gcrsDrill');
+            const labels = data.map(d => d.name); const values = data.map(d => Number(d.clicks)); const users = data.map(d => Number(d.users));
+            const clickPcts = pctArray(values); const userPcts = pctArray(users);
+            charts.gcrsDrill = new Chart(document.getElementById('chartGcrsDrill').getContext('2d'), {
+                type: 'bar',
+                data: { labels, datasets: [
+                    { label: 'Clicks', data: values, backgroundColor: labels.map(l => l === '(unknown)' ? COLORS.lightGray : '#404040'), borderRadius: 2 },
+                    { label: 'Unique Users', data: users, backgroundColor: labels.map(l => l === '(unknown)' ? '#ECEBE4' : '#B8B3A2'), borderRadius: 2 }
+                ]},
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, layout: { padding: { right: 90 } },
+                    plugins: { legend: { position: 'top', labels: { boxWidth: 12 } }, tooltip: { callbacks: { label: ctx => { const p = ctx.datasetIndex === 0 ? clickPcts : userPcts; return `${ctx.dataset.label}: ${formatNumber(ctx.raw)} (${p[ctx.dataIndex]}%)`; } } } },
+                    scales: { x: { display: false }, y: { grid: { display: false }, ticks: { font: { size: 11 } } } },
+                    onClick: (evt, elems) => { if (elems.length && gcrsLevel < GCRS_LEVELS.length - 1) { const lbl = labels[elems[0].index]; if (lbl !== '(unknown)') { gcrsFilters.push({ level: gcrsLevel, value: lbl }); gcrsLevel++; renderGcrsDrill(); } } }
+                },
+                plugins: [groupedBarLabelPlugin([{ values, pcts: clickPcts }, { values: users, pcts: userPcts }])]
+            });
+        }
+
+        function buildGcrsBreadcrumb(currentLabel) {
+            let html = `<span class="${gcrsLevel === 0 ? 'breadcrumb-current' : 'breadcrumb-item'}" onclick="gcrsNavigateTo(-1)">All</span>`;
+            for (let i = 0; i < gcrsFilters.length; i++) { html += `<span class="breadcrumb-sep">&rsaquo;</span>`; const isCurrent = (i === gcrsFilters.length - 1 && gcrsLevel === gcrsFilters.length); html += `<span class="${isCurrent ? 'breadcrumb-current' : 'breadcrumb-item'}" onclick="gcrsNavigateTo(${i})">${gcrsFilters[i].value}</span>`; }
+            if (gcrsFilters.length > 0) { html += `<span class="breadcrumb-sep">&rsaquo;</span><span class="breadcrumb-current">${currentLabel}</span>`; }
+            return html;
+        }
+        function gcrsNavigateTo(index) { if (index === -1) { gcrsLevel = 0; gcrsFilters = []; } else { gcrsFilters = gcrsFilters.slice(0, index + 1); gcrsLevel = index + 1; } renderGcrsDrill(); }
+
+        async function renderRegDrill() {
+            const currentCol = REGION_LEVELS[regionLevel]; const currentLabel = REGION_LABELS[regionLevel];
+            let drillWhere = ''; if (regionFilter) drillWhere = ` AND hr_region = '${String(regionFilter).replace(/'/g, "''")}'`;
+            let colExists = true; try { await q(`SELECT ${currentCol} FROM events LIMIT 1`); } catch(e) { colExists = false; }
+            if (!colExists) { destroyChart('regDrill'); document.getElementById('regionBreadcrumb').innerHTML = buildRegionBreadcrumb(currentLabel) + `<span style="color:var(--medium-gray);font-style:italic;margin-left:0.5rem">Column "${currentLabel}" not available</span>`; return; }
+            const data = await q(`SELECT COALESCE(${currentCol}, '(unknown)') as name, COUNT(*) as clicks, COUNT(DISTINCT gpn) as users FROM events WHERE ${getDateWhere()}${getFilterWhere()}${drillWhere} GROUP BY 1 ORDER BY clicks DESC LIMIT 20`);
+            document.getElementById('regionBreadcrumb').innerHTML = buildRegionBreadcrumb(currentLabel);
+            destroyChart('regDrill');
+            const labels = data.map(d => d.name); const values = data.map(d => Number(d.clicks)); const users = data.map(d => Number(d.users));
+            const clickPcts = pctArray(values); const userPcts = pctArray(users);
+            charts.regDrill = new Chart(document.getElementById('chartRegDrill').getContext('2d'), {
+                type: 'bar',
+                data: { labels, datasets: [
+                    { label: 'Clicks', data: values, backgroundColor: labels.map(l => l === '(unknown)' ? COLORS.lightGray : '#404040'), borderRadius: 2 },
+                    { label: 'Unique Users', data: users, backgroundColor: labels.map(l => l === '(unknown)' ? '#ECEBE4' : '#B8B3A2'), borderRadius: 2 }
+                ]},
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, layout: { padding: { right: 90 } },
+                    plugins: { legend: { position: 'top', labels: { boxWidth: 12 } }, tooltip: { callbacks: { label: ctx => { const p = ctx.datasetIndex === 0 ? clickPcts : userPcts; return `${ctx.dataset.label}: ${formatNumber(ctx.raw)} (${p[ctx.dataIndex]}%)`; } } } },
+                    scales: { x: { display: false }, y: { grid: { display: false }, ticks: { font: { size: 11 } } } },
+                    onClick: (evt, elems) => { if (elems.length && regionLevel === 0) { const lbl = labels[elems[0].index]; if (lbl !== '(unknown)') { regionFilter = lbl; regionLevel = 1; renderRegDrill(); } } }
+                },
+                plugins: [groupedBarLabelPlugin([{ values, pcts: clickPcts }, { values: users, pcts: userPcts }])]
+            });
+        }
+
+        function buildRegionBreadcrumb(currentLabel) {
+            if (regionLevel === 0) return `<span class="breadcrumb-current">All Regions</span>`;
+            return `<span class="breadcrumb-item" onclick="regionNavigateTo(-1)">All Regions</span><span class="breadcrumb-sep">&rsaquo;</span><span class="breadcrumb-current">${regionFilter} — ${currentLabel}</span>`;
+        }
+        function regionNavigateTo(index) { regionLevel = 0; regionFilter = null; renderRegDrill(); }
+
+        async function renderDivDaily() {
+            const top5 = await q(`SELECT COALESCE(hr_division, '(unknown)') as div FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND hr_division IS NOT NULL GROUP BY 1 ORDER BY COUNT(DISTINCT gpn) DESC LIMIT 5`);
+            const divNames = top5.map(d => d.div);
+            if (divNames.length === 0) { destroyChart('divDaily'); return; }
+            const data = await q(`SELECT session_date as date, COALESCE(hr_division, '(unknown)') as div, COUNT(DISTINCT gpn) as users FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND hr_division IN (${divNames.map(d => `'${d.replace(/'/g,"''")}'`).join(',')}) GROUP BY 1, 2 ORDER BY 1`);
+            const dates = [...new Set(data.map(d => toDateStr(d.date)))].sort();
+            const datasets = divNames.map((div, i) => { const m = {}; data.filter(d => d.div === div).forEach(d => { m[toDateStr(d.date)] = Number(d.users); }); return { label: div, data: dates.map(dt => m[dt] || 0), borderColor: CHART_PALETTE[i], tension: 0.3, fill: false }; });
+            destroyChart('divDaily');
+            charts.divDaily = new Chart(document.getElementById('chartDivDaily').getContext('2d'), {
+                type: 'line', data: { labels: dates.map(d => new Date(d)), datasets },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 10 } } } },
+                    scales: { x: { type: 'time', time: { unit: 'day' } }, y: { beginAtZero: true, title: { display: true, text: 'Unique Users' } } } }
+            });
+        }
+
+        async function renderDivDepthTable() {
+            const data = await q(`
+                SELECT COALESCE(hr_division, '(unknown)') as division, COUNT(*) as clicks, COUNT(DISTINCT gpn) as users,
+                       ROUND(COUNT(*) * 1.0 / NULLIF(COUNT(DISTINCT gpn), 0), 1) as clicks_per_user,
+                       COUNT(DISTINCT session_key) as sessions, COUNT(DISTINCT CP_SiteName) as sites
+                FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1 ORDER BY clicks DESC
+            `);
+            const headers = ['Division','Clicks','Users','Clicks/User','Sessions','Sites Visited'];
+            const rows = data.map(d => [d.division, Number(d.clicks), Number(d.users), Number(d.clicks_per_user), Number(d.sessions), Number(d.sites)]);
+            const rightAlign = [false,true,true,true,true,true];
+            tableData.divDepth = { headers, rows, rightAlign };
+            document.getElementById('divDepthTable').innerHTML = renderHTMLTable(headers, rows, rightAlign);
+        }
+
+        // =====================================================================
+        // TAB 5: SESSION BEHAVIOR
+        // =====================================================================
+        async function renderSessionDepth() {
+            const data = await q(`
+                WITH sc AS (SELECT session_key, COUNT(*) as clicks FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1)
+                SELECT CASE WHEN clicks = 1 THEN '1' WHEN clicks = 2 THEN '2' WHEN clicks BETWEEN 3 AND 5 THEN '3-5' WHEN clicks BETWEEN 6 AND 10 THEN '6-10' WHEN clicks BETWEEN 11 AND 20 THEN '11-20' ELSE '20+' END as bucket,
+                       COUNT(*) as sessions FROM sc GROUP BY 1 ORDER BY MIN(clicks)
+            `);
+            const values = data.map(d => Number(d.sessions)); const pcts = pctArray(values);
+            destroyChart('sessionDepth');
+            charts.sessionDepth = new Chart(document.getElementById('chartSessionDepth').getContext('2d'), {
+                type: 'bar', data: { labels: data.map(d => d.bucket), datasets: [{ data: values, backgroundColor: '#5A5D5C', borderRadius: 2 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} sessions (${pcts[ctx.dataIndex]}%)` } } }, scales: { y: { beginAtZero: true, title: { display: true, text: 'Sessions' } } } },
+                plugins: [barLabelPlugin(values, pcts)]
+            });
+        }
+
+        async function renderTimingDist() {
+            const data = await q(`
+                SELECT time_since_prev_bucket as bucket, COUNT(*) as cnt FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND time_since_prev_bucket IS NOT NULL
+                GROUP BY 1 ORDER BY CASE time_since_prev_bucket WHEN 'First Event' THEN 0 WHEN '< 0.5s' THEN 1 WHEN '0.5-1s' THEN 2 WHEN '1-2s' THEN 3 WHEN '2-5s' THEN 4 WHEN '5-10s' THEN 5 WHEN '10-30s' THEN 6 WHEN '30-60s' THEN 7 WHEN '> 60s' THEN 8 END
+            `);
+            const values = data.map(d => Number(d.cnt)); const pcts = pctArray(values);
+            destroyChart('timingDist');
+            charts.timingDist = new Chart(document.getElementById('chartTimingDist').getContext('2d'), {
+                type: 'bar', data: { labels: data.map(d => d.bucket), datasets: [{ data: values, backgroundColor: data.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]), borderRadius: 2 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} (${pcts[ctx.dataIndex]}%)` } } }, scales: { y: { beginAtZero: true } } },
+                plugins: [barLabelPlugin(values, pcts)]
+            });
+        }
+
+        async function renderClickSequences() {
+            const data = await q(`SELECT prev_event as from_event, name as to_event, COUNT(*) as transitions, COUNT(DISTINCT session_key) as sessions FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND prev_event IS NOT NULL GROUP BY 1, 2 ORDER BY transitions DESC LIMIT 50`);
+            const headers = ['From Event', 'To Event', 'Transitions', 'Sessions'];
+            const rows = data.map(d => [d.from_event, d.to_event, Number(d.transitions), Number(d.sessions)]);
+            const rightAlign = [false, false, true, true];
+            tableData.clickSequences = { headers, rows, rightAlign };
+            document.getElementById('clickSequencesTable').innerHTML = rows.length ? renderHTMLTable(headers, rows, rightAlign) : '<p style="padding:1rem;color:var(--medium-gray)">No sequences found.</p>';
+        }
+
+        async function renderSessionDuration() {
+            const data = await q(`
+                WITH sd AS (SELECT session_key, DATEDIFF('second', MIN(timestamp), MAX(timestamp)) / 60.0 as dur FROM events WHERE ${getDateWhere()}${getFilterWhere()} GROUP BY 1 HAVING COUNT(*) > 1)
+                SELECT CASE WHEN dur < 1 THEN '< 1 min' WHEN dur < 5 THEN '1-5 min' WHEN dur < 15 THEN '5-15 min' WHEN dur < 30 THEN '15-30 min' WHEN dur < 60 THEN '30-60 min' ELSE '60+ min' END as bucket,
+                       COUNT(*) as sessions FROM sd GROUP BY 1 ORDER BY MIN(dur)
+            `);
+            const values = data.map(d => Number(d.sessions)); const pcts = pctArray(values);
+            destroyChart('sessionDuration');
+            charts.sessionDuration = new Chart(document.getElementById('chartSessionDuration').getContext('2d'), {
+                type: 'bar', data: { labels: data.map(d => d.bucket), datasets: [{ data: values, backgroundColor: '#5A5D5C', borderRadius: 2 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} sessions (${pcts[ctx.dataIndex]}%)` } } }, scales: { y: { beginAtZero: true, title: { display: true, text: 'Sessions' } } } },
+                plugins: [barLabelPlugin(values, pcts)]
+            });
+        }
+
+        // =====================================================================
+        // TAB 6: DATA QUALITY
+        // =====================================================================
+        async function renderGpnCoverage() {
+            const data = await q(`SELECT CAST(SUM(CASE WHEN gpn IS NOT NULL AND hr_division IS NOT NULL THEN 1 ELSE 0 END) AS INTEGER) as matched, CAST(SUM(CASE WHEN gpn IS NOT NULL AND hr_division IS NULL THEN 1 ELSE 0 END) AS INTEGER) as unmatched, CAST(SUM(CASE WHEN gpn IS NULL THEN 1 ELSE 0 END) AS INTEGER) as no_gpn FROM events WHERE ${getDateWhere()}${getFilterWhere()}`);
+            const d = data[0]; const covValues = [Number(d.matched), Number(d.unmatched), Number(d.no_gpn)]; const covPcts = pctArray(covValues);
+            destroyChart('gpnCoverage');
+            charts.gpnCoverage = new Chart(document.getElementById('chartGpnCoverage').getContext('2d'), {
+                type: 'bar', data: { labels: ['HR Matched', 'GPN but no HR', 'No GPN'], datasets: [{ data: covValues, backgroundColor: [COLORS.success, COLORS.warning, COLORS.lightGray], borderRadius: 2 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} (${covPcts[ctx.dataIndex]}%)` } } }, scales: { y: { beginAtZero: true } } },
+                plugins: [barLabelPlugin(covValues, covPcts)]
+            });
+        }
+
+        async function renderGpnLength() {
+            const data = await q(`SELECT LENGTH(gpn) as len, COUNT(DISTINCT gpn) as cnt FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND gpn IS NOT NULL GROUP BY 1 ORDER BY 1`);
+            const lenValues = data.map(d => Number(d.cnt)); const lenPcts = pctArray(lenValues);
+            destroyChart('gpnLength');
+            charts.gpnLength = new Chart(document.getElementById('chartGpnLength').getContext('2d'), {
+                type: 'bar', data: { labels: data.map(d => d.len + ' chars'), datasets: [{ data: lenValues, backgroundColor: '#5A5D5C', borderRadius: 2 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} (${lenPcts[ctx.dataIndex]}%)` } } }, scales: { y: { beginAtZero: true, title: { display: true, text: 'Unique GPNs' } } } },
+                plugins: [barLabelPlugin(lenValues, lenPcts)]
+            });
+        }
+
+        async function renderUnmatchedGpns() {
+            const data = await q(`SELECT gpn, COUNT(*) as events, COUNT(DISTINCT session_key) as sessions, MIN(session_date) as first_seen, MAX(session_date) as last_seen, ANY_VALUE(email) as sample_email FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND gpn IS NOT NULL AND hr_division IS NULL GROUP BY gpn ORDER BY events DESC LIMIT 50`);
+            const headers = ['GPN','Clicks','Sessions','First Seen','Last Seen','Sample Email'];
+            const rows = data.map(d => [d.gpn, Number(d.events), Number(d.sessions), String(d.first_seen).split('T')[0], String(d.last_seen).split('T')[0], d.sample_email || '']);
+            tableData.unmatchedGpns = { headers, rows, rightAlign: [false,true,true,false,false,false] };
+            document.getElementById('unmatchedGpnTable').innerHTML = rows.length ? renderHTMLTable(headers, rows, [false,true,true,false,false,false]) : '<p style="padding:1rem;color:var(--medium-gray)">No unmatched GPNs in selected range.</p>';
+        }
+
+        async function renderFieldCoverage() {
+            const fields = ['gpn','email','session_id','user_id','CP_Link_Type','CP_Link_label','CP_Link_address','CP_ComponentName','CP_SiteName','CP_SiteID','CP_PageURL','CP_PageName','CP_PageId','CP_ContentType','CP_PageStatus','CP_FileType_Label','CP_FileName_Label','CP_NewsCategory','CP_PublishingDate','CP_ContentOwner','CP_Link_ancestors','hr_division','hr_unit','hr_area','hr_sector','hr_segment','hr_function','hr_region','hr_country','hr_job_family','hr_management_level'];
+            let existingCols; try { existingCols = (await q("DESCRIBE events")).map(d => d.column_name); } catch(e) { existingCols = []; }
+            const validFields = fields.filter(f => existingCols.includes(f));
+            if (!validFields.length) { document.getElementById('fieldCoverageTable').innerHTML = '<p style="padding:1rem">No fields to check.</p>'; return; }
+            const data = await q(`SELECT COUNT(*) as total, ${validFields.map(f => `COUNT("${f}") as "${f}"`).join(', ')} FROM events WHERE ${getDateWhere()}${getFilterWhere()}`);
+            const d = data[0]; const total = Number(d.total);
+            const headers = ['Field', 'Non-null', 'Null', 'Fill Rate'];
+            const rows = validFields.map(f => { const nn = Number(d[f]); return [f, nn.toLocaleString(), (total - nn).toLocaleString(), total > 0 ? (100 * nn / total).toFixed(1) + '%' : '0%']; });
+            tableData.fieldCoverage = { headers, rows, rightAlign: [false, true, true, true] };
+            document.getElementById('fieldCoverageTable').innerHTML = renderHTMLTable(headers, rows, [false, true, true, true]);
+        }
+
+        // =====================================================================
+        // TABLE RENDERING HELPERS
+        // =====================================================================
+        function renderHTMLTable(headers, rows, rightAlign) {
+            const th = headers.map((h, i) => `<th class="${rightAlign && rightAlign[i] ? 'text-right' : ''}">${h}</th>`).join('');
+            const tbody = rows.map(r => '<tr>' + r.map((v, i) => `<td class="${rightAlign && rightAlign[i] ? 'text-right' : ''}">${v != null ? (typeof v === 'number' ? v.toLocaleString() : v) : ''}</td>`).join('') + '</tr>').join('');
+            return `<table><thead><tr>${th}</tr></thead><tbody>${tbody}</tbody></table>`;
+        }
+
+        function renderHeatmapTable(rowLabels, colLabels, getValue, maxVal) {
+            const th = '<th></th>' + colLabels.map(c => `<th>${c}</th>`).join('');
+            const tbody = rowLabels.map((rl, ri) => {
+                const cells = colLabels.map((_, ci) => { const v = getValue(ri, ci); const bg = heatColor(v, maxVal); const fg = textColorForBg(v, maxVal); return `<td style="background:${bg};color:${fg}">${v > 0 ? v : ''}</td>`; }).join('');
+                return `<tr><td class="row-header" title="${rl}">${rl}</td>${cells}</tr>`;
+            }).join('');
+            return `<table class="heatmap-table"><thead><tr>${th}</tr></thead><tbody>${tbody}</tbody></table>`;
+        }
+
+        function renderSortableTable(headers, rows, rightAlign, tableId, defaultSortCol, defaultSortDir) {
+            let sortCol = defaultSortCol; let sortDir = defaultSortDir || 'desc';
+            function render() {
+                const sorted = [...rows].sort((a, b) => { const va = a[sortCol], vb = b[sortCol]; if (typeof va === 'number' && typeof vb === 'number') return sortDir === 'asc' ? va - vb : vb - va; return sortDir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va)); });
+                const arrow = col => col === sortCol ? (sortDir === 'asc' ? ' \u25B2' : ' \u25BC') : '';
+                const th = headers.map((h, i) => `<th class="${rightAlign && rightAlign[i] ? 'text-right' : ''}" style="cursor:pointer;user-select:none" data-col="${i}">${h}${arrow(i)}</th>`).join('');
+                const tbody = sorted.map(r => '<tr>' + r.map((v, i) => `<td class="${rightAlign && rightAlign[i] ? 'text-right' : ''}">${v != null ? (typeof v === 'number' ? v.toLocaleString() : v) : ''}</td>`).join('') + '</tr>').join('');
+                return `<table><thead><tr>${th}</tr></thead><tbody>${tbody}</tbody></table>`;
+            }
+            const container = document.getElementById(tableId + 'Table');
+            container.innerHTML = render();
+            container.addEventListener('click', e => { const th = e.target.closest('th[data-col]'); if (!th) return; const col = Number(th.dataset.col); if (col === sortCol) { sortDir = sortDir === 'asc' ? 'desc' : 'asc'; } else { sortCol = col; sortDir = typeof rows[0]?.[col] === 'number' ? 'desc' : 'asc'; } container.innerHTML = render(); });
+            return container.innerHTML;
+        }
+
+        // =====================================================================
+        // START
+        // =====================================================================
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
