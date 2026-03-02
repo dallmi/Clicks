@@ -17,7 +17,8 @@
 //   9. Link Address domain analysis
 //  10. FileType distribution
 //  11. Daily volume trend
-//  12. Raw sample (10 events)
+//  12. New fields profiling (Video, Topic, Theme, TargetOrg, TargetRegion, refUri)
+//  13. Raw sample (10 events)
 // ============================================================================
 
 
@@ -216,7 +217,41 @@ customEvents
 
 
 // ---------------------------------------------------------------------------
-// 12. RAW SAMPLE — 10 events with full CustomProps for structure inspection
+// 12. NEW FIELDS PROFILING — fill rates, cardinality & sample values for
+//     Video, Topic, Theme, TargetOrganisation, TargetRegion, refUri
+// ---------------------------------------------------------------------------
+customEvents
+| where timestamp >= ago(30d)
+| where name == 'click_event'
+| extend cd = todynamic(customDimensions)
+| extend CP = todynamic(tostring(cd.CustomProps))
+| summarize
+    // Video fields
+    Video_Action_Values = make_set(tostring(CP.Video_Action), 20),
+    Video_Action_Count = dcountif(tostring(CP.Video_Id), isnotempty(tostring(CP.Video_Action))),
+    Video_Type_Values = make_set(tostring(CP.Video_Type), 20),
+    Video_Duration_Sample = make_set(tostring(CP.Video_Duration), 10),
+    // Content targeting
+    Topic_Values = make_set(tostring(CP.Topic), 30),
+    Topic_Distinct = dcount(tostring(CP.Topic)),
+    Theme_Values = make_set(tostring(CP.Theme), 30),
+    Theme_Distinct = dcount(tostring(CP.Theme)),
+    TargetOrg_Values = make_set(tostring(CP.TargetOrganisation), 20),
+    TargetOrg_Distinct = dcount(tostring(CP.TargetOrganisation)),
+    TargetRegion_Values = make_set(tostring(CP.TargetRegion), 20),
+    TargetRegion_Distinct = dcount(tostring(CP.TargetRegion)),
+    // Fill rates (what % of events have each field)
+    Total = count(),
+    Has_Video = countif(isnotempty(tostring(CP.Video_Action))),
+    Has_Topic = countif(isnotempty(tostring(CP.Topic))),
+    Has_Theme = countif(isnotempty(tostring(CP.Theme))),
+    Has_TargetOrg = countif(isnotempty(tostring(CP.TargetOrganisation))),
+    Has_TargetRegion = countif(isnotempty(tostring(CP.TargetRegion))),
+    Has_refUri = countif(isnotempty(tostring(CP.refUri)))
+
+
+// ---------------------------------------------------------------------------
+// 13. RAW SAMPLE — 10 events with full CustomProps for structure inspection
 // ---------------------------------------------------------------------------
 customEvents
 | where timestamp >= ago(7d)
