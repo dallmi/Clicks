@@ -251,6 +251,8 @@
                 <button class="nav-tab" onclick="switchTab('tabSitesPages')">Sites & Pages</button>
                 <button class="nav-tab" onclick="switchTab('tabDivisions')">Divisions & Regions</button>
                 <button class="nav-tab" onclick="switchTab('tabSessions')">Session Behavior</button>
+                <button class="nav-tab" onclick="switchTab('tabContent')">Content</button>
+                <button class="nav-tab" onclick="switchTab('tabVideo')">Video</button>
                 <button class="nav-tab" onclick="switchTab('tabQuality')">Data Quality</button>
             </div>
 
@@ -402,6 +404,69 @@
                     <div class="chart-card full-width">
                         <div class="chart-title">Session Duration Distribution <span class="chart-subtitle">Minutes (multi-click sessions only)</span></div>
                         <div class="chart-container"><canvas id="chartSessionDuration"></canvas></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 7: Content -->
+            <div class="nav-content" id="tabContent">
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <div class="chart-title">Theme Distribution <span class="chart-subtitle">Click to filter</span></div>
+                        <div class="chart-container tall"><canvas id="chartThemeDoughnut"></canvas></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-title">Target Region <span class="chart-subtitle">Click to filter</span></div>
+                        <div class="chart-container tall"><canvas id="chartTargetRegion"></canvas></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Top 30 Topics by Click Volume <span class="chart-subtitle">Click to filter</span></div>
+                        <div class="chart-container xtall"><canvas id="chartTopics"></canvas></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Theme × Topic
+                            <button class="export-btn export-btn-sm" onclick="exportTable('themeTopic','xlsx')">Export XLSX</button>
+                        </div>
+                        <div class="table-container" id="themeTopicHeatmap"></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Top 20 Target Organisations</div>
+                        <div class="chart-container xtall"><canvas id="chartTargetOrg"></canvas></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Target Region × Theme
+                            <button class="export-btn export-btn-sm" onclick="exportTable('regionTheme','xlsx')">Export XLSX</button>
+                        </div>
+                        <div class="table-container" id="regionThemeHeatmap"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 8: Video -->
+            <div class="nav-content" id="tabVideo">
+                <div class="kpi-grid" id="videoKpiGrid"></div>
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <div class="chart-title">Video Actions <span class="chart-subtitle">play, pause, resume, ended</span></div>
+                        <div class="chart-container tall"><canvas id="chartVideoActions"></canvas></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-title">Video Duration Distribution <span class="chart-subtitle">Seconds</span></div>
+                        <div class="chart-container tall"><canvas id="chartVideoDuration"></canvas></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Top 20 Videos by Plays</div>
+                        <div class="chart-container xtall"><canvas id="chartTopVideos"></canvas></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Video Completion Funnel</div>
+                        <div id="videoFunnelContainer" style="height:180px"></div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Video Detail
+                            <button class="export-btn export-btn-sm" onclick="exportTable('videoDetail','xlsx')">Export XLSX</button>
+                        </div>
+                        <div class="table-container" id="videoDetailTable"></div>
                     </div>
                 </div>
             </div>
@@ -661,6 +726,45 @@
             autoSizeColumns(ws);
         }
 
+        function buildContentSheet(wb) {
+            const ws = wb.addWorksheet('Content');
+            let r = 1;
+            r = addSectionTitle(ws, r, 'Content', 10); r++;
+            r = addSectionTitle(ws, r, 'Theme Distribution / Target Region');
+            const sr = r;
+            addChartImage(wb, ws, 'themeDoughnut', sr, 0, 5, 15);
+            r = addChartImage(wb, ws, 'targetRegion', sr, 5, 10, 15);
+            r = addSectionTitle(ws, r, 'Top Topics');
+            r = addChartImage(wb, ws, 'topics', r, 0, 10, 30);
+            if (tableData.themeTopic) {
+                const cols = tableData.themeTopic.headers.length;
+                r = addSectionTitle(ws, r, 'Theme × Topic', cols);
+                r = addStyledTable(ws, r, tableData.themeTopic.headers, tableData.themeTopic.rows, { isHeatmap: true, maxVal: tableData.themeTopic.maxVal, rightAlign: [false, ...Array(cols-1).fill(true)] });
+            }
+            r = addSectionTitle(ws, r, 'Top Target Organisations');
+            r = addChartImage(wb, ws, 'targetOrg', r, 0, 10, 30);
+            if (tableData.regionTheme) {
+                const cols = tableData.regionTheme.headers.length;
+                r = addSectionTitle(ws, r, 'Target Region × Theme', cols);
+                r = addStyledTable(ws, r, tableData.regionTheme.headers, tableData.regionTheme.rows, { isHeatmap: true, maxVal: tableData.regionTheme.maxVal, rightAlign: [false, ...Array(cols-1).fill(true)] });
+            }
+            autoSizeColumns(ws);
+        }
+
+        function buildVideoSheet(wb) {
+            const ws = wb.addWorksheet('Video');
+            let r = 1;
+            r = addSectionTitle(ws, r, 'Video', 10); r++;
+            r = addSectionTitle(ws, r, 'Video Actions / Duration');
+            const sr = r;
+            addChartImage(wb, ws, 'videoActions', sr, 0, 5, 15);
+            r = addChartImage(wb, ws, 'videoDuration', sr, 5, 10, 15);
+            r = addSectionTitle(ws, r, 'Top Videos');
+            r = addChartImage(wb, ws, 'topVideos', r, 0, 10, 30);
+            if (tableData.videoDetail) { r = addSectionTitle(ws, r, 'Video Detail'); r = addStyledTable(ws, r, tableData.videoDetail.headers, tableData.videoDetail.rows, { rightAlign: tableData.videoDetail.rightAlign }); }
+            autoSizeColumns(ws);
+        }
+
         function buildDataQualitySheet(wb) {
             const ws = wb.addWorksheet('Data Quality');
             let r = 1;
@@ -683,12 +787,12 @@
                 const wb = new ExcelJS.Workbook();
                 wb.creator = 'Clicks Dashboard'; wb.created = new Date();
                 const activeTabId = document.querySelector('.nav-content.active')?.id;
-                const allTabIds = ['tabOverview','tabClickTypes','tabSitesPages','tabDivisions','tabSessions','tabQuality'];
+                const allTabIds = ['tabOverview','tabClickTypes','tabSitesPages','tabDivisions','tabSessions','tabContent','tabVideo','tabQuality'];
                 allTabIds.forEach(id => { const el = document.getElementById(id); el.classList.add('active'); el.style.display = 'block'; });
                 await new Promise(r => setTimeout(r, 300));
                 try {
                     buildOverviewSheet(wb); buildClickTypesSheet(wb); buildSitesPagesSheet(wb);
-                    buildDivisionsSheet(wb); buildSessionsSheet(wb); buildDataQualitySheet(wb);
+                    buildDivisionsSheet(wb); buildSessionsSheet(wb); buildContentSheet(wb); buildVideoSheet(wb); buildDataQualitySheet(wb);
                 } finally {
                     allTabIds.forEach(id => { const el = document.getElementById(id); el.classList.remove('active'); el.style.display = ''; });
                     if (activeTabId) document.getElementById(activeTabId).classList.add('active');
@@ -930,6 +1034,8 @@
                     renderTopSites, renderTopPages, renderSiteLinkTypeHeatmap, renderPagesDetail,
                     renderGcrsDrill, renderRegDrill, renderDivDaily, renderDivDepthTable,
                     renderSessionDepth, renderTimingDist, renderClickSequences, renderSessionDuration,
+                    renderThemeDoughnut, renderTargetRegion, renderTopics, renderThemeTopicHeatmap, renderTargetOrg, renderRegionThemeHeatmap,
+                    renderVideoKPIs, renderVideoActions, renderVideoDuration, renderTopVideos, renderVideoFunnel, renderVideoDetail,
                     renderGpnCoverage, renderGpnLength, renderUnmatchedGpns, renderFieldCoverage
                 ];
                 const results = await Promise.allSettled(tasks.map(fn => fn()));
@@ -1324,6 +1430,237 @@
         }
 
         // =====================================================================
+        // TAB 7: CONTENT
+        // =====================================================================
+        async function renderThemeDoughnut() {
+            const data = await q(`SELECT COALESCE(CP_Theme, '(blank)') as theme, COUNT(*) as cnt FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_Theme IS NOT NULL GROUP BY 1 ORDER BY cnt DESC`);
+            if (!data.length) { destroyChart('themeDoughnut'); return; }
+            const values = data.map(d => Number(d.cnt)); const pcts = pctArray(values);
+            const labels = data.map(d => d.theme);
+            destroyChart('themeDoughnut');
+            charts.themeDoughnut = new Chart(document.getElementById('chartThemeDoughnut').getContext('2d'), {
+                type: 'doughnut', data: { labels, datasets: [{ data: values, backgroundColor: data.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]) }] },
+                options: { responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { position: 'right', labels: doughnutLegendLabels(values, pcts) }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} (${pcts[ctx.dataIndex]}%)` } } },
+                    onClick: (evt, elems) => { if (elems.length) toggleFilter('Theme', labels[elems[0].index], 'CP_Theme'); }
+                }
+            });
+        }
+
+        async function renderTargetRegion() {
+            const data = await q(`SELECT COALESCE(CP_TargetRegion, '(blank)') as region, COUNT(*) as cnt FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_TargetRegion IS NOT NULL GROUP BY 1 ORDER BY cnt DESC`);
+            if (!data.length) { destroyChart('targetRegion'); return; }
+            const values = data.map(d => Number(d.cnt)); const pcts = pctArray(values);
+            const labels = data.map(d => d.region);
+            destroyChart('targetRegion');
+            charts.targetRegion = new Chart(document.getElementById('chartTargetRegion').getContext('2d'), {
+                type: 'doughnut', data: { labels, datasets: [{ data: values, backgroundColor: data.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]) }] },
+                options: { responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { position: 'right', labels: doughnutLegendLabels(values, pcts) }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} (${pcts[ctx.dataIndex]}%)` } } },
+                    onClick: (evt, elems) => { if (elems.length) toggleFilter('Target Region', labels[elems[0].index], 'CP_TargetRegion'); }
+                }
+            });
+        }
+
+        async function renderTopics() {
+            const data = await q(`SELECT COALESCE(CP_Topic, '(blank)') as topic, COUNT(*) as cnt FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_Topic IS NOT NULL GROUP BY 1 ORDER BY cnt DESC LIMIT 30`);
+            if (!data.length) { destroyChart('topics'); return; }
+            const values = data.map(d => Number(d.cnt)); const pcts = pctArray(values);
+            const labels = data.map(d => d.topic);
+            destroyChart('topics');
+            charts.topics = new Chart(document.getElementById('chartTopics').getContext('2d'), {
+                type: 'bar', data: { labels, datasets: [{ data: values, backgroundColor: data.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]), borderRadius: 2 }] },
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, layout: { padding: { right: 80 } },
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} (${pcts[ctx.dataIndex]}%)` } } },
+                    scales: { x: { display: false }, y: { grid: { display: false }, ticks: { font: { size: 10 } } } },
+                    onClick: (evt, elems) => { if (elems.length) toggleFilter('Topic', labels[elems[0].index], 'CP_Topic'); }
+                },
+                plugins: [barLabelPlugin(values, pcts, { horizontal: true })]
+            });
+        }
+
+        async function renderThemeTopicHeatmap() {
+            const data = await q(`
+                WITH top_th AS (SELECT COALESCE(CP_Theme,'(blank)') as theme FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_Theme IS NOT NULL GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 14),
+                     top_tp AS (SELECT COALESCE(CP_Topic,'(blank)') as topic FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_Topic IS NOT NULL GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 15)
+                SELECT COALESCE(CP_Theme,'(blank)') as theme, COALESCE(CP_Topic,'(blank)') as topic, COUNT(*) as cnt
+                FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND COALESCE(CP_Theme,'(blank)') IN (SELECT theme FROM top_th) AND COALESCE(CP_Topic,'(blank)') IN (SELECT topic FROM top_tp)
+                GROUP BY 1, 2
+            `);
+            if (!data.length) { document.getElementById('themeTopicHeatmap').innerHTML = '<p style="padding:1rem;color:var(--medium-gray)">No data.</p>'; return; }
+            const themes = [...new Set(data.map(d => d.theme))];
+            const topics = [...new Set(data.map(d => d.topic))];
+            const map = {}; data.forEach(d => { map[d.theme + '|' + d.topic] = Number(d.cnt); });
+            const maxVal = Math.max(...data.map(d => Number(d.cnt)), 1);
+            const headers = ['Theme', ...topics];
+            const rows = themes.map(th => [th, ...topics.map(tp => map[th + '|' + tp] || 0)]);
+            tableData.themeTopic = { headers, rows, isHeatmap: true, maxVal };
+            document.getElementById('themeTopicHeatmap').innerHTML = renderHeatmapTable(themes, topics, (r, c) => map[themes[r] + '|' + topics[c]] || 0, maxVal);
+        }
+
+        async function renderTargetOrg() {
+            const data = await q(`SELECT COALESCE(CP_TargetOrganisation, '(blank)') as org, COUNT(*) as cnt FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_TargetOrganisation IS NOT NULL GROUP BY 1 ORDER BY cnt DESC LIMIT 20`);
+            if (!data.length) { destroyChart('targetOrg'); return; }
+            const values = data.map(d => Number(d.cnt)); const pcts = pctArray(values);
+            destroyChart('targetOrg');
+            charts.targetOrg = new Chart(document.getElementById('chartTargetOrg').getContext('2d'), {
+                type: 'bar', data: { labels: data.map(d => d.org.length > 50 ? d.org.substring(0, 50) + '…' : d.org), datasets: [{ data: values, backgroundColor: data.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]), borderRadius: 2 }] },
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, layout: { padding: { right: 80 } },
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} (${pcts[ctx.dataIndex]}%)` } } },
+                    scales: { x: { display: false }, y: { grid: { display: false }, ticks: { font: { size: 10 } } } } },
+                plugins: [barLabelPlugin(values, pcts, { horizontal: true })]
+            });
+        }
+
+        async function renderRegionThemeHeatmap() {
+            const data = await q(`
+                SELECT COALESCE(CP_TargetRegion,'(blank)') as region, COALESCE(CP_Theme,'(blank)') as theme, COUNT(*) as cnt
+                FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_TargetRegion IS NOT NULL AND CP_Theme IS NOT NULL
+                GROUP BY 1, 2
+            `);
+            if (!data.length) { document.getElementById('regionThemeHeatmap').innerHTML = '<p style="padding:1rem;color:var(--medium-gray)">No data.</p>'; return; }
+            const regions = [...new Set(data.map(d => d.region))];
+            const themes = [...new Set(data.map(d => d.theme))];
+            const map = {}; data.forEach(d => { map[d.region + '|' + d.theme] = Number(d.cnt); });
+            const maxVal = Math.max(...data.map(d => Number(d.cnt)), 1);
+            const headers = ['Target Region', ...themes];
+            const rows = regions.map(r => [r, ...themes.map(th => map[r + '|' + th] || 0)]);
+            tableData.regionTheme = { headers, rows, isHeatmap: true, maxVal };
+            document.getElementById('regionThemeHeatmap').innerHTML = renderHeatmapTable(regions, themes, (ri, ci) => map[regions[ri] + '|' + themes[ci]] || 0, maxVal);
+        }
+
+        // =====================================================================
+        // TAB 8: VIDEO
+        // =====================================================================
+        async function renderVideoKPIs() {
+            const data = await q(`
+                SELECT COUNT(*) as events, COUNT(DISTINCT CP_Video_Id) as videos, COUNT(DISTINCT gpn) as viewers,
+                       CAST(SUM(CASE WHEN CP_Video_Action = 'play' THEN 1 ELSE 0 END) AS INTEGER) as plays,
+                       CAST(SUM(CASE WHEN CP_Video_Action = 'ended' THEN 1 ELSE 0 END) AS INTEGER) as completions
+                FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_Video_Action IS NOT NULL
+            `);
+            const d = data[0] || {};
+            const completionRate = Number(d.plays) > 0 ? (100 * Number(d.completions) / Number(d.plays)).toFixed(1) : '0';
+            document.getElementById('videoKpiGrid').innerHTML = [
+                kpiCard('VIDEO EVENTS', fmtNum(d.events), 'highlight'),
+                kpiCard('UNIQUE VIDEOS', fmtNum(d.videos), 'info'),
+                kpiCard('UNIQUE VIEWERS', fmtNum(d.viewers), 'info', 'Distinct GPNs'),
+                kpiCard('PLAYS', fmtNum(d.plays), 'success'),
+                kpiCard('COMPLETIONS', fmtNum(d.completions), 'warning'),
+                kpiCard('COMPLETION RATE', completionRate + '%', d.completionRate > 50 ? 'success' : 'warning'),
+            ].join('');
+        }
+
+        async function renderVideoActions() {
+            const data = await q(`SELECT COALESCE(CP_Video_Action, '(blank)') as action, COUNT(*) as cnt FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_Video_Action IS NOT NULL GROUP BY 1 ORDER BY cnt DESC`);
+            if (!data.length) { destroyChart('videoActions'); return; }
+            const values = data.map(d => Number(d.cnt)); const pcts = pctArray(values);
+            destroyChart('videoActions');
+            charts.videoActions = new Chart(document.getElementById('chartVideoActions').getContext('2d'), {
+                type: 'doughnut', data: { labels: data.map(d => d.action), datasets: [{ data: values, backgroundColor: data.map((_, i) => CHART_PALETTE[i % CHART_PALETTE.length]) }] },
+                options: { responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { position: 'right', labels: doughnutLegendLabels(values, pcts) }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} (${pcts[ctx.dataIndex]}%)` } } } }
+            });
+        }
+
+        async function renderVideoDuration() {
+            const data = await q(`
+                SELECT CASE
+                    WHEN CAST(CP_Video_Duration AS DOUBLE) < 30 THEN '< 30s'
+                    WHEN CAST(CP_Video_Duration AS DOUBLE) < 60 THEN '30-60s'
+                    WHEN CAST(CP_Video_Duration AS DOUBLE) < 120 THEN '1-2 min'
+                    WHEN CAST(CP_Video_Duration AS DOUBLE) < 300 THEN '2-5 min'
+                    WHEN CAST(CP_Video_Duration AS DOUBLE) < 600 THEN '5-10 min'
+                    ELSE '10+ min' END as bucket,
+                    COUNT(DISTINCT CP_Video_Id) as videos
+                FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_Video_Duration IS NOT NULL AND CP_Video_Action = 'play'
+                GROUP BY 1 ORDER BY MIN(CAST(CP_Video_Duration AS DOUBLE))
+            `);
+            if (!data.length) { destroyChart('videoDuration'); return; }
+            const values = data.map(d => Number(d.videos)); const pcts = pctArray(values);
+            destroyChart('videoDuration');
+            charts.videoDuration = new Chart(document.getElementById('chartVideoDuration').getContext('2d'), {
+                type: 'bar', data: { labels: data.map(d => d.bucket), datasets: [{ data: values, backgroundColor: '#5A5D5C', borderRadius: 2 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${formatNumber(ctx.raw)} videos (${pcts[ctx.dataIndex]}%)` } } }, scales: { y: { beginAtZero: true, title: { display: true, text: 'Videos' } } } },
+                plugins: [barLabelPlugin(values, pcts)]
+            });
+        }
+
+        async function renderTopVideos() {
+            const data = await q(`
+                SELECT COALESCE(CP_Video_Title, CP_Video_Label, CP_Video_Id, '(unknown)') as title,
+                       CAST(SUM(CASE WHEN CP_Video_Action = 'play' THEN 1 ELSE 0 END) AS INTEGER) as plays,
+                       COUNT(DISTINCT gpn) as viewers
+                FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_Video_Action IS NOT NULL
+                GROUP BY 1 ORDER BY plays DESC LIMIT 20
+            `);
+            if (!data.length) { destroyChart('topVideos'); return; }
+            const values = data.map(d => Number(d.plays)); const viewers = data.map(d => Number(d.viewers));
+            const playPcts = pctArray(values); const viewerPcts = pctArray(viewers);
+            destroyChart('topVideos');
+            charts.topVideos = new Chart(document.getElementById('chartTopVideos').getContext('2d'), {
+                type: 'bar',
+                data: { labels: data.map(d => d.title.length > 50 ? d.title.substring(0, 50) + '…' : d.title), datasets: [
+                    { label: 'Plays', data: values, backgroundColor: '#404040', borderRadius: 2 },
+                    { label: 'Unique Viewers', data: viewers, backgroundColor: '#B8B3A2', borderRadius: 2 }
+                ]},
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, layout: { padding: { right: 90 } },
+                    plugins: { legend: { position: 'top', labels: { boxWidth: 12 } }, tooltip: { callbacks: { label: ctx => { const p = ctx.datasetIndex === 0 ? playPcts : viewerPcts; return `${ctx.dataset.label}: ${formatNumber(ctx.raw)} (${p[ctx.dataIndex]}%)`; } } } },
+                    scales: { x: { display: false }, y: { grid: { display: false }, ticks: { font: { size: 10 } } } } },
+                plugins: [groupedBarLabelPlugin([{ values, pcts: playPcts }, { values: viewers, pcts: viewerPcts }])]
+            });
+        }
+
+        async function renderVideoFunnel() {
+            const data = await q(`
+                SELECT CAST(SUM(CASE WHEN CP_Video_Action = 'play' THEN 1 ELSE 0 END) AS INTEGER) as plays,
+                       CAST(SUM(CASE WHEN CP_Video_Action = 'pause' THEN 1 ELSE 0 END) AS INTEGER) as pauses,
+                       CAST(SUM(CASE WHEN CP_Video_Action = 'resume' THEN 1 ELSE 0 END) AS INTEGER) as resumes,
+                       CAST(SUM(CASE WHEN CP_Video_Action = 'ended' THEN 1 ELSE 0 END) AS INTEGER) as completions
+                FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_Video_Action IS NOT NULL
+            `);
+            const d = data[0] || {};
+            const steps = [
+                { label: 'Play', value: Number(d.plays) || 0, color: '#404040' },
+                { label: 'Pause', value: Number(d.pauses) || 0, color: COLORS.warning },
+                { label: 'Resume', value: Number(d.resumes) || 0, color: '#B98E2C' },
+                { label: 'Ended', value: Number(d.completions) || 0, color: COLORS.success }
+            ];
+            const topVal = steps[0].value || 1;
+            const minPct = 15;
+            document.getElementById('videoFunnelContainer').innerHTML = steps.map(s => {
+                const widthPct = Math.max(minPct, (s.value / topVal) * 100);
+                const conv = ` (${topVal ? pct(s.value, topVal) : 0}%)`;
+                return `<div style="display:flex;align-items:center;justify-content:center;margin-bottom:4px">
+                    <div style="width:110px;text-align:right;padding-right:12px;font-size:12px;font-weight:600;color:#404040;flex-shrink:0">${s.label}</div>
+                    <div style="flex:1;display:flex;justify-content:center">
+                        <div style="width:${widthPct}%;background:${s.color};color:#fff;text-align:center;padding:6px 0;border-radius:3px;font-size:12px;font-weight:500;min-width:60px;transition:width 0.3s ease">
+                            ${formatNumber(s.value)}${conv}
+                        </div>
+                    </div>
+                    <div style="width:110px;flex-shrink:0"></div>
+                </div>`;
+            }).join('');
+        }
+
+        async function renderVideoDetail() {
+            const data = await q(`
+                SELECT COALESCE(CP_Video_Title, CP_Video_Label, CP_Video_Id, '(unknown)') as title,
+                       CAST(SUM(CASE WHEN CP_Video_Action = 'play' THEN 1 ELSE 0 END) AS INTEGER) as plays,
+                       CAST(SUM(CASE WHEN CP_Video_Action = 'ended' THEN 1 ELSE 0 END) AS INTEGER) as completions,
+                       COUNT(DISTINCT gpn) as viewers,
+                       ROUND(AVG(CASE WHEN CP_Video_Duration IS NOT NULL THEN CAST(CP_Video_Duration AS DOUBLE) END), 0) as avg_duration
+                FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND CP_Video_Action IS NOT NULL
+                GROUP BY 1 ORDER BY plays DESC LIMIT 50
+            `);
+            const headers = ['Video', 'Plays', 'Completions', 'Viewers', 'Avg Duration (s)'];
+            const rows = data.map(d => [d.title, Number(d.plays), Number(d.completions), Number(d.viewers), Number(d.avg_duration) || 0]);
+            const rightAlign = [false, true, true, true, true];
+            tableData.videoDetail = { headers, rows, rightAlign };
+            document.getElementById('videoDetailTable').innerHTML = rows.length ? renderSortableTable(headers, rows, rightAlign, 'videoDetail', 1, 'desc') : '<p style="padding:1rem;color:var(--medium-gray)">No video data.</p>';
+        }
+
+        // =====================================================================
         // TAB 5: SESSION BEHAVIOR
         // =====================================================================
         async function renderSessionDepth() {
@@ -1413,7 +1750,7 @@
         }
 
         async function renderFieldCoverage() {
-            const fields = ['gpn','email','session_id','user_id','CP_Link_Type','CP_Link_label','CP_Link_address','CP_ComponentName','CP_SiteName','CP_SiteID','CP_PageURL','CP_PageName','CP_PageId','CP_ContentType','CP_PageStatus','CP_FileType_Label','CP_FileName_Label','CP_NewsCategory','CP_PublishingDate','CP_ContentOwner','CP_Link_ancestors','hr_division','hr_unit','hr_area','hr_sector','hr_segment','hr_function','hr_region','hr_country','hr_job_family','hr_management_level'];
+            const fields = ['gpn','email','session_id','user_id','CP_Link_Type','CP_Link_label','CP_Link_address','CP_ComponentName','CP_SiteName','CP_SiteID','CP_PageURL','CP_PageName','CP_PageId','CP_ContentType','CP_PageStatus','CP_FileType_Label','CP_FileName_Label','CP_NewsCategory','CP_PublishingDate','CP_ContentOwner','CP_Link_ancestors','CP_Theme','CP_Topic','CP_TargetOrganisation','CP_TargetRegion','CP_refUri','CP_Video_Action','CP_Video_Id','CP_Video_Title','CP_Video_Label','CP_Video_Type','CP_Video_Duration','CP_Video_PlayedTime','CP_Video_Address','CP_Video_Ancestors','hr_division','hr_unit','hr_area','hr_sector','hr_segment','hr_function','hr_region','hr_country','hr_job_family','hr_management_level'];
             let existingCols; try { existingCols = (await q("DESCRIBE events")).map(d => d.column_name); } catch(e) { existingCols = []; }
             const validFields = fields.filter(f => existingCols.includes(f));
             if (!validFields.length) { document.getElementById('fieldCoverageTable').innerHTML = '<p style="padding:1rem">No fields to check.</p>'; return; }
