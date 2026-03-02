@@ -27,9 +27,13 @@
 customEvents
 | where timestamp >= ago(90d)
 | where name == 'click_event'
+| extend cd = todynamic(customDimensions)
+| extend CP = todynamic(tostring(cd.CustomProps))
+| extend GPN = tostring(CP.GPN)
 | summarize
     TotalEvents = count(),
-    UniqueUsers = dcount(user_Id),
+    UniqueVisitors = dcount(user_Id),
+    UniqueGPNs = dcount(GPN),
     UniqueSessions = dcount(session_Id),
     FirstEvent = min(timestamp),
     LastEvent = max(timestamp),
