@@ -65,7 +65,39 @@ ClickData
 // --- QUERY B: Simplified version (no CP_ prefix, just unpack CustomProps) ---
 // customEvents | where timestamp >= ago(30d) | where name == 'click_event' | extend cd = todynamic(customDimensions) | extend CP = todynamic(tostring(cd.CustomProps)) | evaluate bag_unpack(CP) | project-reorder timestamp, name | order by timestamp desc
 
-// --- QUERY C: Filter by specific email (change EmailFilter value) ---
+// --- QUERY C: Anonymized extraction (hash GPN, drop Email) ---
+set truncationmaxrecords = 500000;
+let TimeRange = 90d;
+let pepper = 'f4c6a28e86cfa11e95ee832cabf4c8c1862f78017c044111cae083584f0208cb';
+let CustomPropsPrefix = "CP_";
+let ClickData = customEvents
+    | where timestamp >= ago(TimeRange)
+    | where name == 'click_event'
+    | extend cd = todynamic(customDimensions)
+    | extend CustomPropsRaw = tostring(cd.CustomProps)
+    | extend CP = iff(isnotempty(CustomPropsRaw) and CustomPropsRaw startswith "{", todynamic(CustomPropsRaw), dynamic({}))
+    | serialize
+    | extend rowId = row_number()
+    | extend cpKeys = bag_keys(CP)
+    | extend cpKeys = iff(array_length(cpKeys) == 0, dynamic(["__no_cp__"]), cpKeys)
+    | mv-expand cpKey = cpKeys to typeof(string)
+    | extend cpValue = tostring(CP[cpKey])
+    | extend kvBag = iff(cpKey == "__no_cp__", dynamic({}), pack(strcat(CustomPropsPrefix, cpKey), cpValue))
+    | summarize take_any(timestamp), take_any(name), take_any(client_CountryOrRegion), take_any(user_Id), take_any(session_Id), merged = make_bag(kvBag) by rowId
+    | extend finalBag = coalesce(merged, dynamic({}));
+ClickData
+| evaluate bag_unpack(finalBag)
+| project-away rowId, merged
+| extend CP_GPN = hash_sha256(strcat(pepper, tostring(CP_GPN)))
+| project-away CP_Email
+| extend ['timestamp [UTC]'] = format_datetime(timestamp, 'dd/MM/yyyy HH:mm:ss.fffffff')
+| project-away timestamp
+| project-reorder ['timestamp [UTC]'], name, client_CountryOrRegion, user_Id, session_Id
+| order by ['timestamp [UTC]'] desc
+
+
+// --- QUERY D: Filter by specific email (change EmailFilter value) ---
+// NOTE: Uses plain-text GPN/Email for filtering — not anonymized
 set truncationmaxrecords = 500000;
 let TimeRange = 90d;
 let EmailFilter = "john.doe";
