@@ -25,6 +25,14 @@
 // ---------------------------------------------------------------------------
 // 0. VOLUME OVERVIEW — total events, unique users, sessions, date range
 // ---------------------------------------------------------------------------
+let fmt = (n:long) {
+    case(
+        n >= 1000000000, strcat(n/1000000000, "'", substring(tostring(n%1000000000/1000000+1000),1,3), "'", substring(tostring(n%1000000/1000+1000),1,3), "'", substring(tostring(n%1000+1000),1,3)),
+        n >= 1000000, strcat(n/1000000, "'", substring(tostring(n%1000000/1000+1000),1,3), "'", substring(tostring(n%1000+1000),1,3)),
+        n >= 1000, strcat(n/1000, "'", substring(tostring(n%1000+1000),1,3)),
+        tostring(n)
+    )
+};
 customEvents
 | where timestamp >= ago(90d)
 | where name == 'click_event'
@@ -39,6 +47,14 @@ customEvents
     FirstEvent = min(timestamp),
     LastEvent = max(timestamp),
     Countries = dcount(client_CountryOrRegion)
+| project
+    TotalEvents = fmt(TotalEvents),
+    UniqueVisitors = fmt(UniqueVisitors),
+    UniqueGPNs = fmt(UniqueGPNs),
+    UniqueSessions = fmt(UniqueSessions),
+    FirstEvent,
+    LastEvent,
+    Countries
 
 
 // ---------------------------------------------------------------------------
