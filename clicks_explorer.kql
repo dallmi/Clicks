@@ -23,7 +23,31 @@
 
 
 // ---------------------------------------------------------------------------
-// 0. VOLUME OVERVIEW — total events, unique users, sessions, date range
+// 0a. EXACT DISTINCT COUNT COMPARISON — userId vs GPN vs hashed GPN
+// ---------------------------------------------------------------------------
+let pepper = 'f4c6a28e86cfa11e95ee832cabf4c8c1862f78017c044111cae083584f0208cb';
+let base = customEvents
+| where timestamp >= ago(90d)
+| where name == 'click_event'
+| extend cd = todynamic(customDimensions)
+| extend CP = todynamic(tostring(cd.CustomProps))
+| extend GPN = tostring(CP.GPN)
+| extend person_hash = hash_sha256(strcat(pepper, GPN));
+let exact_userId = base | distinct user_Id       | summarize Exact_userId = count();
+let exact_GPN    = base | distinct GPN            | summarize Exact_GPN = count();
+let exact_hash   = base | distinct person_hash    | summarize Exact_Hash = count();
+exact_userId | extend x=0
+| join kind=inner (exact_GPN | extend x=0) on x
+| join kind=inner (exact_hash | extend x=0) on x
+| project
+    Exact_userId,
+    Exact_GPN,
+    Exact_Hash,
+    Ratio_userId_to_GPN = round(1.0 * Exact_userId / Exact_GPN, 2)
+
+
+// ---------------------------------------------------------------------------
+// 0b. VOLUME OVERVIEW — total events, unique users, sessions, date range
 // ---------------------------------------------------------------------------
 let pepper = 'f4c6a28e86cfa11e95ee832cabf4c8c1862f78017c044111cae083584f0208cb';
 let fmt = (n:long) {
