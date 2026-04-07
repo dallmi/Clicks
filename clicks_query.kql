@@ -25,7 +25,6 @@
 // === COPY FROM HERE ===
 set truncationmaxrecords = 500000;
 let TimeRange = 90d;
-let pepper = 'f4c6a28e86cfa11e95ee832cabf4c8c1862f78017c044111cae083584f0208cb';
 let CustomPropsPrefix = "CP_";
 let ClickData = customEvents
     | where timestamp >= ago(TimeRange)
@@ -49,9 +48,6 @@ let ClickData = customEvents
 ClickData
 | evaluate bag_unpack(finalBag)
 | project-away rowId, merged
-// --- Anonymize: hash GPN, drop Email ---
-| extend CP_GPN = hash_sha256(strcat(pepper, tostring(CP_GPN)))
-| project-away CP_Email
 | extend ['timestamp [UTC]'] = format_datetime(timestamp, 'dd/MM/yyyy HH:mm:ss.fffffff')
 | project-away timestamp
 | project-reorder ['timestamp [UTC]'], name, client_CountryOrRegion, user_Id, session_Id
@@ -72,7 +68,6 @@ ClickData
 // --- QUERY C: Filter by specific email (change EmailFilter value) ---
 set truncationmaxrecords = 500000;
 let TimeRange = 90d;
-let pepper = 'f4c6a28e86cfa11e95ee832cabf4c8c1862f78017c044111cae083584f0208cb';
 let EmailFilter = "john.doe";
 let CustomPropsPrefix = "CP_";
 let ClickData = customEvents
@@ -94,9 +89,6 @@ let ClickData = customEvents
 ClickData
 | evaluate bag_unpack(finalBag)
 | project-away rowId, merged
-// --- Anonymize: hash GPN, drop Email ---
-| extend CP_GPN = hash_sha256(strcat(pepper, tostring(CP_GPN)))
-| project-away CP_Email
 | extend ['timestamp [UTC]'] = format_datetime(timestamp, 'dd/MM/yyyy HH:mm:ss.fffffff')
 | project-away timestamp
 | project-reorder ['timestamp [UTC]'], name, client_CountryOrRegion, user_Id, session_Id
