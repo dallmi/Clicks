@@ -26,6 +26,14 @@
 // 0a. EXACT DISTINCT COUNT COMPARISON — userId vs GPN vs hashed GPN
 // ---------------------------------------------------------------------------
 let pepper = 'f4c6a28e86cfa11e95ee832cabf4c8c1862f78017c044111cae083584f0208cb';
+let fmt = (n:long) {
+    case(
+        n >= 1000000000, strcat(n/1000000000, "'", substring(tostring(n%1000000000/1000000+1000),1,3), "'", substring(tostring(n%1000000/1000+1000),1,3), "'", substring(tostring(n%1000+1000),1,3)),
+        n >= 1000000, strcat(n/1000000, "'", substring(tostring(n%1000000/1000+1000),1,3), "'", substring(tostring(n%1000+1000),1,3)),
+        n >= 1000, strcat(n/1000, "'", substring(tostring(n%1000+1000),1,3)),
+        tostring(n)
+    )
+};
 let base = customEvents
 | where timestamp >= ago(90d)
 | where name == 'click_event'
@@ -40,9 +48,9 @@ exact_userId | extend x=0
 | join kind=inner (exact_GPN | extend x=0) on x
 | join kind=inner (exact_hash | extend x=0) on x
 | project
-    Exact_userId,
-    Exact_GPN,
-    Exact_Hash,
+    Exact_userId = fmt(Exact_userId),
+    Exact_GPN = fmt(Exact_GPN),
+    Exact_Hash = fmt(Exact_Hash),
     Ratio_userId_to_GPN = round(1.0 * Exact_userId / Exact_GPN, 2)
 
 
