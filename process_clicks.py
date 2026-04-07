@@ -43,10 +43,39 @@ import os
 import re
 import glob
 import hashlib
+import hmac
 import duckdb
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
+
+
+# ---------------------------------------------------------------------------
+# GDPR-compliant pseudonymization: HMAC-SHA256 with secret pepper.
+# The pepper MUST be stored separately from the analytics data (env var,
+# secrets manager, etc.).  Without the pepper, hashes cannot be reversed
+# or correlated across systems.
+# ---------------------------------------------------------------------------
+HASH_PEPPER = os.environ.get(
+    "ANALYTICS_HASH_PEPPER",
+    "f4c6a28e86cfa11e95ee832cabf4c8c1862f78017c044111cae083584f0208cb"
+)
+
+
+def hmac_hash_gpn(gpn_value: str) -> str:
+    """HMAC-SHA256 hash of a GPN using the secret pepper."""
+    if not gpn_value or gpn_value.strip() == '':
+        return None
+    return hmac.new(
+        HASH_PEPPER.encode('utf-8'),
+        gpn_value.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+
+
+def register_hmac_udf(con):
+    """Register hmac_hash as a DuckDB scalar UDF for use in SQL queries."""
+    con.create_function('hmac_hash', hmac_hash_gpn, [duckdb.typing.VARCHAR], duckdb.typing.VARCHAR)
 
 
 def log(message):
@@ -1154,7 +1183,7 @@ def export_parquet_files(con, output_dir):
     for c in cols_kept:
         if c in hash_columns:
             alias = c.replace('gpn', 'person_hash').replace('GPN', 'Person_Hash')
-            select_parts.append(f"sha256(CAST({c} AS VARCHAR))::VARCHAR AS {alias}")
+            select_parts.append(f"hmac_hash(CAST({c} AS VARCHAR)) AS {alias}")
         else:
             select_parts.append(c)
 
@@ -1350,8 +1379,8 @@ def export_cdm_tables(con, output_dir):
     lt_join = f"COALESCE(e.\"{link_type_col}\", '(unknown)')" if link_type_col else "'(unknown)'"
     comp_join = f"COALESCE(e.\"{component_col}\", '(unknown)')" if component_col else "'(unknown)'"
 
-    # GPN anonymization — SHA-256 hash, same as events_anonymized
-    gpn_hash_expr = "sha256(CAST(e.gpn AS VARCHAR))::VARCHAR" if 'gpn' in events_cols else "NULL"
+    # GPN anonymization — HMAC-SHA256 with pepper, same as events_anonymized
+    gpn_hash_expr = "hmac_hash(CAST(e.gpn AS VARCHAR))" if 'gpn' in events_cols else "NULL"
 
     con.execute(f"""
         CREATE OR REPLACE TEMP TABLE fact_clicks AS
@@ -1687,6 +1716,7 @@ def process_clicks(input_file=None, full_refresh=False):
 
         # Connect to DuckDB (fresh DB after deletion)
         con = duckdb.connect(str(db_path))
+        register_hmac_udf(con)
         ensure_manifest_table(con)
 
         for input_path in files_to_process:
@@ -1705,6 +1735,7 @@ def process_clicks(input_file=None, full_refresh=False):
             sys.exit(1)
 
         con = duckdb.connect(str(db_path))
+        register_hmac_udf(con)
         ensure_manifest_table(con)
 
         log(f"\nForce-processing: {input_path.name}")
@@ -1728,6 +1759,7 @@ def process_clicks(input_file=None, full_refresh=False):
             sys.exit(1)
 
         con = duckdb.connect(str(db_path))
+        register_hmac_udf(con)
         unprocessed = get_unprocessed_files(con, input_dir)
 
         if not unprocessed:
