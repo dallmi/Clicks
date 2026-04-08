@@ -36,8 +36,8 @@
             --warning-light: #FDF6E3;
             --danger: #BD000C;
             --danger-light: #FFEBE6;
-            --info: #8E8D83;
-            --info-light: #ECEBE4;
+            --info: #0C7EC6;
+            --info-light: #E6F1FA;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -513,7 +513,7 @@
         const COLORS = {
             primary: '#E60000', primaryDark: '#8A000A',
             success: '#6F7A1A', warning: '#E4A911', danger: '#BD000C',
-            info: '#8E8D83', gray: '#7A7870', lightGray: '#CCCABC', dark: '#404040',
+            info: '#0C7EC6', gray: '#7A7870', lightGray: '#CCCABC', dark: '#404040',
         };
 
         const CHART_PALETTE = [
@@ -521,6 +521,35 @@
             '#2E476B','#469A6C','#AD3E4A','#8489BD','#0C7EC6',
             '#654D16','#804C95','#45999C','#4972AC','#CC707A',
             '#295B40','#545A9C','#785E4A','#07476F','#620004'
+        ];
+
+        const DIVISION_COLOR_MAP = {
+            'Investment Bank':              '#404040',
+            'Global Wealth Management':     '#B8B3A2',
+            'Asset Management':             '#5A5D5C',
+            'Group Functions':              '#CCCABC',
+            'Personal & Corporate Banking': '#7A7870',
+        };
+        const DIVISION_GRAYS_FALLBACK = ['#8E8D83', '#404040', '#B8B3A2', '#5A5D5C', '#CCCABC', '#7A7870'];
+        let divFallbackIdx = 0;
+        function getDivisionColor(name) {
+            if (DIVISION_COLOR_MAP[name]) return DIVISION_COLOR_MAP[name];
+            const color = DIVISION_GRAYS_FALLBACK[divFallbackIdx % DIVISION_GRAYS_FALLBACK.length];
+            divFallbackIdx++;
+            return color;
+        }
+
+        const REGION_COLORS = {
+            'SWITZERLAND': '#404040',
+            'EMEA':        '#B8B3A2',
+            'AMERICAS':    '#5A5D5C',
+            'APAC':        '#7A7870',
+            'Unknown':     '#CCCABC',
+        };
+
+        const COUNTRY_PALETTE = [
+            '#879420', '#9F8865', '#469A6C', '#AD3E4A', '#8489BD',
+            '#0C7EC6', '#654D16', '#804C95', '#45999C', '#4972AC'
         ];
 
         const HEATMAP_STOPS = ['#FFFFFF','#F5F0E1','#E4A911','#E60000','#8A000A'];
@@ -1406,7 +1435,7 @@
             if (divNames.length === 0) { destroyChart('divDaily'); return; }
             const data = await q(`SELECT session_date as date, COALESCE(hr_division, '(unknown)') as div, COUNT(DISTINCT gpn) as users FROM events WHERE ${getDateWhere()}${getFilterWhere()} AND hr_division IN (${divNames.map(d => `'${d.replace(/'/g,"''")}'`).join(',')}) GROUP BY 1, 2 ORDER BY 1`);
             const dates = [...new Set(data.map(d => toDateStr(d.date)))].sort();
-            const datasets = divNames.map((div, i) => { const m = {}; data.filter(d => d.div === div).forEach(d => { m[toDateStr(d.date)] = Number(d.users); }); return { label: div, data: dates.map(dt => m[dt] || 0), borderColor: CHART_PALETTE[i], tension: 0.3, fill: false }; });
+            const datasets = divNames.map((div, i) => { const m = {}; data.filter(d => d.div === div).forEach(d => { m[toDateStr(d.date)] = Number(d.users); }); return { label: div, data: dates.map(dt => m[dt] || 0), borderColor: getDivisionColor(div), tension: 0.3, fill: false }; });
             destroyChart('divDaily');
             charts.divDaily = new Chart(document.getElementById('chartDivDaily').getContext('2d'), {
                 type: 'line', data: { labels: dates.map(d => new Date(d)), datasets },
