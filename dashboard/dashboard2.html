@@ -709,23 +709,19 @@ table.heatmap td.cell { font-variant-numeric: tabular-nums; font-weight: 500; }
   <div class="advanced-row hidden" id="advancedRow">
     <div class="filter-group">
       <label>Topic</label>
-      <input list="topicList" id="filterTopic" placeholder="All" oninput="onFilterChange()">
-      <datalist id="topicList"></datalist>
+      <div class="multi-select" id="ms_filterTopic"></div>
     </div>
     <div class="filter-group">
       <label>Theme</label>
-      <input list="themeList" id="filterTheme" placeholder="All" oninput="onFilterChange()">
-      <datalist id="themeList"></datalist>
+      <div class="multi-select" id="ms_filterTheme"></div>
     </div>
     <div class="filter-group">
       <label>Target Org</label>
-      <input list="orgList" id="filterOrg" placeholder="All" oninput="onFilterChange()">
-      <datalist id="orgList"></datalist>
+      <div class="multi-select" id="ms_filterOrg"></div>
     </div>
     <div class="filter-group">
       <label>Target Region</label>
-      <input list="regionList" id="filterRegion" placeholder="All" oninput="onFilterChange()">
-      <datalist id="regionList"></datalist>
+      <div class="multi-select" id="ms_filterRegion"></div>
     </div>
   </div>
 </div>
@@ -1247,31 +1243,31 @@ async function loadDistinctValues(col, limit) {
 }
 
 async function populateFilterDatalists() {
-  // Datalists for the simple <input list="..."> fields in the Advanced row
-  const fillList = async (listId, col, limit) => {
-    if (!col) return;
-    const values = await loadDistinctValues(col, limit);
-    const dl = document.getElementById(listId);
-    dl.innerHTML = values.map(v => `<option value="${v.replace(/"/g,'&quot;')}">`).join('');
-  };
-  await fillList('topicList',  columns.topic,        2000);
-  await fillList('themeList',  columns.theme,        100);
-  await fillList('orgList',    columns.targetOrg,    2000);
-  await fillList('regionList', columns.targetRegion, 500);
+  // Multi-select dropdowns — top row + advanced row, all behave the same
+  multiSelects.site   = new MultiSelect('ms_filterSite',   { placeholder: 'All sites',          onChange: debounceRender });
+  multiSelects.page   = new MultiSelect('ms_filterPage',   { placeholder: 'All pages',          onChange: debounceRender });
+  multiSelects.link   = new MultiSelect('ms_filterLink',   { placeholder: 'All link labels',    onChange: debounceRender });
+  multiSelects.topic  = new MultiSelect('ms_filterTopic',  { placeholder: 'All topics',         onChange: debounceRender });
+  multiSelects.theme  = new MultiSelect('ms_filterTheme',  { placeholder: 'All themes',         onChange: debounceRender });
+  multiSelects.org    = new MultiSelect('ms_filterOrg',    { placeholder: 'All target orgs',    onChange: debounceRender });
+  multiSelects.region = new MultiSelect('ms_filterRegion', { placeholder: 'All target regions', onChange: debounceRender });
 
-  // Multi-select dropdowns for the top filters
-  multiSelects.site = new MultiSelect('ms_filterSite', { placeholder: 'All sites', onChange: debounceRender });
-  multiSelects.page = new MultiSelect('ms_filterPage', { placeholder: 'All pages', onChange: debounceRender });
-  multiSelects.link = new MultiSelect('ms_filterLink', { placeholder: 'All link labels', onChange: debounceRender });
-
-  const [siteVals, pageVals, linkVals] = await Promise.all([
-    loadDistinctValues(columns.site,      2000),
-    loadDistinctValues(columns.pageName,  10000),
-    loadDistinctValues(columns.linkLabel, 10000),
+  const [siteVals, pageVals, linkVals, topicVals, themeVals, orgVals, regionVals] = await Promise.all([
+    loadDistinctValues(columns.site,         2000),
+    loadDistinctValues(columns.pageName,    10000),
+    loadDistinctValues(columns.linkLabel,   10000),
+    loadDistinctValues(columns.topic,        2000),
+    loadDistinctValues(columns.theme,         100),
+    loadDistinctValues(columns.targetOrg,    2000),
+    loadDistinctValues(columns.targetRegion,  500),
   ]);
   multiSelects.site.setOptions(siteVals);
   multiSelects.page.setOptions(pageVals);
   multiSelects.link.setOptions(linkVals);
+  multiSelects.topic.setOptions(topicVals);
+  multiSelects.theme.setOptions(themeVals);
+  multiSelects.org.setOptions(orgVals);
+  multiSelects.region.setOptions(regionVals);
 }
 
 // =====================================================================
@@ -1283,20 +1279,19 @@ function getDateWhere() {
 }
 
 function getFilterClauses() {
-  const v = id => document.getElementById(id).value.trim();
-  const eqClause = (col, val) => col && val ? ` AND ${col} = '${escSql(val)}'` : '';
   const inClause = (col, vals) => col && vals && vals.length
     ? ` AND ${col} IN (${vals.map(x => `'${escSql(x)}'`).join(',')})`
     : '';
+  const ms = key => multiSelects[key] ? multiSelects[key].getValues() : [];
 
   let w = '';
-  w += inClause(columns.site,      multiSelects.site ? multiSelects.site.getValues() : []);
-  w += inClause(columns.pageName,  multiSelects.page ? multiSelects.page.getValues() : []);
-  w += inClause(columns.linkLabel, multiSelects.link ? multiSelects.link.getValues() : []);
-  w += eqClause(columns.topic, v('filterTopic'));
-  w += eqClause(columns.theme, v('filterTheme'));
-  w += eqClause(columns.targetOrg, v('filterOrg'));
-  w += eqClause(columns.targetRegion, v('filterRegion'));
+  w += inClause(columns.site,         ms('site'));
+  w += inClause(columns.pageName,     ms('page'));
+  w += inClause(columns.linkLabel,    ms('link'));
+  w += inClause(columns.topic,        ms('topic'));
+  w += inClause(columns.theme,        ms('theme'));
+  w += inClause(columns.targetOrg,    ms('org'));
+  w += inClause(columns.targetRegion, ms('region'));
   return w;
 }
 
@@ -2111,8 +2106,6 @@ window.toggleAdvanced = function() {
 };
 
 window.resetFilters = function() {
-  ['filterTopic','filterTheme','filterOrg','filterRegion']
-    .forEach(id => document.getElementById(id).value = '');
   Object.values(multiSelects).forEach(ms => ms.clear());
   applyPreset('all');
 };
