@@ -750,6 +750,7 @@ async function renderPagesTable() {
 async function renderLinksTable() {
   const w = whereClause();
   const pageCol  = columns.pageName || columns.pageUrl;
+  const urlCol   = columns.pageUrl  || columns.pageName;
   const labelCol = columns.linkLabel;
   const dlExpr = columns.fileType
     ? `COUNT(*) FILTER (WHERE ${columns.fileType} IS NOT NULL AND ${columns.fileType} <> '')`
@@ -760,6 +761,7 @@ async function renderLinksTable() {
   const sort = sortState.links;
   const rows = await q(`
     SELECT
+      COALESCE(${urlCol},  '')          AS page_url,
       COALESCE(${pageCol}, '(unknown)') AS page_name,
       ${labelCol ? `COALESCE(${labelCol}, '(no label)')` : `'(no label)'`} AS link_title,
       COALESCE(${columns.linkAddress}, '') AS destination,
@@ -767,7 +769,7 @@ async function renderLinksTable() {
       COUNT(DISTINCT ${columns.gpn}) AS unique_clicks,
       ${dlExpr} AS downloads
     FROM events ${w}
-    GROUP BY 1, 2, 3
+    GROUP BY 1, 2, 3, 4
     ORDER BY ${sort.col} ${sort.dir.toUpperCase()}
     LIMIT ${TABLE_LIMIT}
   `);
@@ -787,6 +789,7 @@ async function renderLinksTable() {
     <table>
       <thead>
         <tr>
+          ${th('links', 'page_url', 'Page URL')}
           ${th('links', 'page_name', 'Page Name')}
           ${th('links', 'link_title', 'Link Title')}
           ${th('links', 'destination', 'Destination Link')}
@@ -798,6 +801,7 @@ async function renderLinksTable() {
       <tbody>
         ${rows.map(r => `
           <tr>
+            <td class="url" title="${escapeHtml(r.page_url)}">${escapeHtml(r.page_url)}</td>
             <td>${escapeHtml(r.page_name)}</td>
             <td class="label" title="${escapeHtml(r.link_title)}">${escapeHtml(r.link_title)}</td>
             <td class="url"><a href="${escapeAttr(r.destination)}" target="_blank" rel="noopener" title="${escapeHtml(r.destination)}">${escapeHtml(r.destination)}</a></td>
@@ -809,7 +813,7 @@ async function renderLinksTable() {
       </tbody>
       <tfoot>
         <tr>
-          <td colspan="3">Overall (filtered)</td>
+          <td colspan="4">Overall (filtered)</td>
           <td class="num">${fmt(totals.total_clicks)}</td>
           <td class="num">${fmt(totals.unique_clicks)}</td>
           <td class="num">${fmt(totals.downloads)}</td>
@@ -832,7 +836,7 @@ function escapeAttr(s) { return escapeHtml(s); }
 window.sortBy = function(table, col) {
   const s = sortState[table];
   if (s.col === col) s.dir = s.dir === 'asc' ? 'desc' : 'asc';
-  else { s.col = col; s.dir = ['page_name','url','link_title','destination'].includes(col) ? 'asc' : 'desc'; }
+  else { s.col = col; s.dir = ['page_name','page_url','url','link_title','destination'].includes(col) ? 'asc' : 'desc'; }
   if (table === 'pages') renderPagesTable(); else renderLinksTable();
 };
 
@@ -905,11 +909,11 @@ window.exportTable = async function(key) {
   if (!data) return;
   const headers = key === 'pages'
     ? ['Page Name','URL','Number of Links Clicked','Total Clicks','Unique Clicks']
-    : ['Page Name','Link Title','Destination Link','Total Clicks','Unique Clicks','Total Downloads'];
+    : ['Page URL','Page Name','Link Title','Destination Link','Total Clicks','Unique Clicks','Total Downloads'];
   const cols = key === 'pages'
     ? ['page_name','url','num_links_clicked','total_clicks','unique_clicks']
-    : ['page_name','link_title','destination','total_clicks','unique_clicks','downloads'];
-  const numIdx = key === 'pages' ? [2,3,4] : [3,4,5];
+    : ['page_url','page_name','link_title','destination','total_clicks','unique_clicks','downloads'];
+  const numIdx = key === 'pages' ? [2,3,4] : [4,5,6];
 
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Click-Tracking Dashboard';
