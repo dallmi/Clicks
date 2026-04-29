@@ -629,7 +629,9 @@ class MultiSelect {
     this.search = '';
     this.open = false;
     this.maxRendered = 500;
+    this.ready = false;
     this.render();
+    this.renderList();
     MultiSelect.instances.push(this);
     if (!MultiSelect._docBound) {
       document.addEventListener('click', e => {
@@ -646,6 +648,7 @@ class MultiSelect {
 
   setOptions(values) {
     this.options = (values || []).map(v => String(v));
+    this.ready = true;
     this.renderList();
   }
 
@@ -716,9 +719,13 @@ class MultiSelect {
   }
 
   renderList() {
+    if (!this.ready) {
+      this.listEl.innerHTML = '<div class="ms-empty">Loading…</div>';
+      return;
+    }
     const opts = this.filteredOptions();
     if (!opts.length) {
-      this.listEl.innerHTML = '<div class="ms-empty">No matches</div>';
+      this.listEl.innerHTML = `<div class="ms-empty">${this.search ? 'No matches' : 'No values available'}</div>`;
       return;
     }
     const visible = opts.slice(0, this.maxRendered);
