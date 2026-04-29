@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<title>Click-Tracking Dashboard</title>
+
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script type="module">
+  import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.28.0/+esm';
+  window.duckdb = duckdb;
+  window.dispatchEvent(new Event('duckdb-ready'));
+</script>
+
+<style>
+:root {
+  --primary: #E60000;
+  --primary-dark: #8A000A;
+  --black: #000000;
+  --dark-gray: #404040;
+  --medium-gray: #7A7870;
+  --light-gray: #CCCABC;
+  --surface: #ECEBE4;
+  --row-alt: #F8F7F2;
+  --bg: #F7F7F5;
+  --white: #FFFFFF;
+  --success: #6F7A1A;
+  --warning: #E4A911;
+  --danger: #BD000C;
+  --info: #0C7EC6;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--dark-gray);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+/* ---- Header ---- */
+.header {
+  background: var(--white);
+  border-bottom: 1px solid var(--light-gray);
+  padding: 0.6rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.header h1 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--black);
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--primary);
+}
+.header-right { display: flex; gap: 0.75rem; align-items: center; }
+.btn {
+  padding: 0.4rem 0.85rem;
+  border: 1px solid var(--light-gray);
+  background: var(--white);
+  color: var(--dark-gray);
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.btn:hover { background: var(--surface); border-color: var(--medium-gray); }
+.btn-primary { background: var(--primary); color: var(--white); border-color: var(--primary); }
+.btn-primary:hover { background: var(--primary-dark); border-color: var(--primary-dark); }
+
+.status {
+  font-size: 0.7rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 2px;
+  background: var(--surface);
+  color: var(--medium-gray);
+}
+.status.loading { color: var(--info); }
+.status.ready { color: var(--success); }
+.status.error { color: var(--danger); }
+
+/* ---- Filter Bar ---- */
+.filter-bar {
+  background: var(--white);
+  border-bottom: 1px solid var(--light-gray);
+  padding: 0.75rem 1.5rem;
+}
+.filter-row {
+  display: grid;
+  grid-template-columns: minmax(280px, 1.2fr) 1fr 1fr 1fr auto;
+  gap: 0.75rem;
+  align-items: end;
+}
+.filter-group { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.filter-group label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--medium-gray);
+  font-weight: 600;
+}
+.filter-group input,
+.filter-group select {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--light-gray);
+  border-radius: 2px;
+  background: var(--white);
+  font-size: 0.8rem;
+  font-family: inherit;
+  width: 100%;
+}
+.filter-group input:focus,
+.filter-group select:focus { outline: none; border-color: var(--primary); }
+
+.date-presets { display: flex; gap: 0.4rem; }
+.date-range { display: flex; gap: 0.4rem; align-items: center; }
+.date-range input { flex: 1; }
+.date-preset {
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--light-gray);
+  background: var(--white);
+  color: var(--medium-gray);
+  border-radius: 2px;
+  font-size: 0.7rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+.date-preset:hover { background: var(--surface); }
+.date-preset.active { background: var(--primary); color: var(--white); border-color: var(--primary); }
+
+.advanced-toggle {
+  font-size: 0.75rem;
+  color: var(--info);
+  cursor: pointer;
+  user-select: none;
+  padding: 0.4rem 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: none;
+  border: none;
+  font-family: inherit;
+}
+.advanced-toggle:hover { color: var(--primary-dark); }
+.advanced-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--light-gray);
+}
+.advanced-row.hidden { display: none; }
+
+/* ---- Container ---- */
+.container { padding: 1rem 1.5rem 2rem; }
+
+/* ---- KPI Strip ---- */
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.kpi {
+  background: var(--white);
+  border: 1px solid var(--light-gray);
+  border-radius: 2px;
+  padding: 0.7rem 0.9rem;
+  border-left: 3px solid var(--primary);
+  position: relative;
+  min-width: 0;
+}
+.kpi.info { border-left-color: var(--info); }
+.kpi.success { border-left-color: var(--success); }
+.kpi.warning { border-left-color: var(--warning); }
+.kpi-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--medium-gray);
+  font-weight: 600;
+}
+.kpi-value {
+  font-size: 1.4rem;
+  font-weight: 300;
+  color: var(--black);
+  line-height: 1.1;
+  margin-top: 0.2rem;
+}
+.kpi-sub { font-size: 0.65rem; color: var(--medium-gray); margin-top: 0.15rem; }
+
+/* ---- Section ---- */
+.section {
+  background: var(--white);
+  border: 1px solid var(--light-gray);
+  border-radius: 2px;
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+.section-head {
+  background: var(--surface);
+  padding: 0.55rem 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--light-gray);
+}
+.section-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--black);
+}
+.section-actions { display: flex; gap: 0.5rem; align-items: center; }
+.section-meta { font-size: 0.7rem; color: var(--medium-gray); }
+
+/* ---- Table ---- */
+.table-wrap {
+  max-height: 540px;
+  overflow: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+th, td {
+  padding: 0.42rem 0.65rem;
+  text-align: left;
+  border-bottom: 1px solid var(--surface);
+  vertical-align: top;
+}
+thead th {
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: 600;
+  color: var(--dark-gray);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--light-gray);
+  cursor: pointer;
+  user-select: none;
+}
+thead th:hover { background: var(--light-gray); }
+thead th.sorted::after {
+  content: ' ▾';
+  font-size: 0.65rem;
+  color: var(--primary);
+}
+thead th.sorted.asc::after { content: ' ▴'; }
+tbody tr:nth-child(even) { background: var(--row-alt); }
+tbody tr:hover { background: var(--surface); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.url, td.label {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+td a { color: var(--info); text-decoration: none; }
+td a:hover { text-decoration: underline; }
+tfoot td {
+  background: var(--surface);
+  font-weight: 600;
+  border-top: 2px solid var(--light-gray);
+  position: sticky;
+  bottom: 0;
+}
+
+/* ---- Loading / Empty ---- */
+.loading-state, .empty-state {
+  padding: 3rem 2rem;
+  text-align: center;
+  color: var(--medium-gray);
+}
+.loading-state .spinner {
+  width: 32px; height: 32px;
+  border: 3px solid var(--surface);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 0.75rem;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.error-msg {
+  padding: 1.5rem;
+  background: #FFEBE6;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: 2px;
+  margin: 1rem 0;
+  font-size: 0.85rem;
+}
+.error-msg code {
+  background: var(--white);
+  padding: 0.1rem 0.3rem;
+  border-radius: 2px;
+  font-size: 0.78rem;
+}
+
+/* ---- Footer ---- */
+.footer {
+  text-align: center;
+  font-size: 0.7rem;
+  color: var(--medium-gray);
+  padding: 0.75rem 0 1.25rem;
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 1100px) {
+  .kpi-strip { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 900px) {
+  .filter-row { grid-template-columns: 1fr 1fr; }
+  .advanced-row { grid-template-columns: 1fr 1fr; }
+  .kpi-strip { grid-template-columns: repeat(2, 1fr); }
+  .kpi-value { font-size: 1.2rem; }
+}
+</style>
+</head>
+
+<body>
+
+<div class="header">
+  <h1>Click-Tracking Dashboard</h1>
+  <div class="header-right">
+    <span class="status loading" id="status">Initializing…</span>
+    <button class="btn" id="resetBtn" onclick="resetFilters()">Reset Filter</button>
+  </div>
+</div>
+
+<div class="filter-bar" id="filterBar" style="display:none">
+  <div class="filter-row">
+    <div class="filter-group">
+      <label>Date Range</label>
+      <div class="date-presets">
+        <button class="date-preset" data-preset="all" onclick="applyPreset('all')">All</button>
+        <button class="date-preset" data-preset="12m" onclick="applyPreset('12m')">12M</button>
+        <button class="date-preset" data-preset="6m" onclick="applyPreset('6m')">6M</button>
+        <button class="date-preset" data-preset="3m" onclick="applyPreset('3m')">3M</button>
+      </div>
+      <div class="date-range" style="margin-top:0.35rem">
+        <input type="date" id="dateFrom" onchange="onCustomDate()">
+        <input type="date" id="dateTo" onchange="onCustomDate()">
+      </div>
+    </div>
+    <div class="filter-group">
+      <label>Site Name</label>
+      <input list="siteList" id="filterSite" placeholder="All" oninput="onFilterChange()">
+      <datalist id="siteList"></datalist>
+    </div>
+    <div class="filter-group">
+      <label>Page Name</label>
+      <input id="filterPage" placeholder="Contains…" oninput="onFilterChange()">
+    </div>
+    <div class="filter-group">
+      <label>Link Label</label>
+      <input id="filterLink" placeholder="Contains…" oninput="onFilterChange()">
+    </div>
+    <button class="advanced-toggle" id="advBtn" onclick="toggleAdvanced()">
+      <span id="advCaret">▸</span> Advanced
+    </button>
+  </div>
+  <div class="advanced-row hidden" id="advancedRow">
+    <div class="filter-group">
+      <label>Topic</label>
+      <input list="topicList" id="filterTopic" placeholder="All" oninput="onFilterChange()">
+      <datalist id="topicList"></datalist>
+    </div>
+    <div class="filter-group">
+      <label>Theme</label>
+      <input list="themeList" id="filterTheme" placeholder="All" oninput="onFilterChange()">
+      <datalist id="themeList"></datalist>
+    </div>
+    <div class="filter-group">
+      <label>Target Org</label>
+      <input list="orgList" id="filterOrg" placeholder="All" oninput="onFilterChange()">
+      <datalist id="orgList"></datalist>
+    </div>
+    <div class="filter-group">
+      <label>Target Region</label>
+      <input list="regionList" id="filterRegion" placeholder="All" oninput="onFilterChange()">
+      <datalist id="regionList"></datalist>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+
+  <div id="loadingState" class="loading-state">
+    <div class="spinner"></div>
+    <div id="loadingText">Initializing DuckDB…</div>
+  </div>
+
+  <div id="errorState" style="display:none"></div>
+
+  <div id="dashboardContent" style="display:none">
+
+    <div class="kpi-strip" id="kpiStrip"></div>
+
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title">Pages</div>
+        <div class="section-actions">
+          <span class="section-meta" id="pagesMeta"></span>
+          <button class="btn" onclick="exportTable('pages')">Export XLSX</button>
+        </div>
+      </div>
+      <div class="table-wrap" id="pagesTable"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title">Clicks on links and download documents</div>
+        <div class="section-actions">
+          <span class="section-meta" id="linksMeta"></span>
+          <button class="btn" onclick="exportTable('links')">Export XLSX</button>
+        </div>
+      </div>
+      <div class="table-wrap" id="linksTable"></div>
+    </div>
+
+    <div class="footer" id="footer"></div>
+  </div>
+</div>
+
+<script>
+// =====================================================================
+// State
+// =====================================================================
+let db, conn;
+let columns = {};        // resolved CP_* column names
+let dateFilter = { from: null, to: null };
+let activePreset = 'all';
+let sortState = {
+  pages: { col: 'total_clicks', dir: 'desc' },
+  links: { col: 'total_clicks', dir: 'desc' }
+};
+let lastResults = { pages: null, links: null };
+
+const TABLE_LIMIT = 100;
+
+// =====================================================================
+// Helpers
+// =====================================================================
+function fmt(n) { return n == null ? '-' : Number(n).toLocaleString('en-US'); }
+function fmtDate(d) { return d.toISOString().split('T')[0]; }
+function setStatus(cls, msg) {
+  const el = document.getElementById('status');
+  el.className = 'status ' + cls;
+  el.textContent = msg;
+}
+function setLoadingText(msg) { document.getElementById('loadingText').textContent = msg; }
+function escSql(v) { return String(v).replace(/'/g, "''"); }
+
+async function q(sql) {
+  const res = await conn.query(sql);
+  return res.toArray().map(r => Object.fromEntries(Object.entries(r)));
+}
+
+// =====================================================================
+// Init
+// =====================================================================
+async function init() {
+  try {
+    setStatus('loading', 'Waiting for DuckDB…');
+    if (!window.duckdb) {
+      await Promise.race([
+        new Promise(r => window.addEventListener('duckdb-ready', r, { once: true })),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('DuckDB failed to load after 30s.')), 30000))
+      ]);
+    }
+    setLoadingText('Initializing DuckDB…');
+    const m = window.duckdb;
+    const bundles = m.getJsDelivrBundles();
+    const bundle = await m.selectBundle(bundles);
+    const wurl = URL.createObjectURL(new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' }));
+    const worker = new Worker(wurl);
+    db = new m.AsyncDuckDB(new m.ConsoleLogger(), worker);
+    await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+    URL.revokeObjectURL(wurl);
+    conn = await db.connect();
+
+    setLoadingText('Loading events_raw.parquet…');
+    await loadParquet();
+    await resolveColumns();
+    await setInitialDateRange();
+    await populateFilterDatalists();
+
+    document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('dashboardContent').style.display = 'block';
+    document.getElementById('filterBar').style.display = 'block';
+    setStatus('ready', 'Ready');
+    applyPreset('all');
+  } catch (err) {
+    console.error(err);
+    setStatus('error', 'Error');
+    document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('errorState').style.display = 'block';
+    document.getElementById('errorState').innerHTML = `
+      <div class="error-msg">
+        <strong>Could not load dashboard:</strong> ${err.message}<br><br>
+        Run <code>python process_clicks.py</code> in the project root to regenerate
+        <code>output/events_raw.parquet</code>, then start a local web server
+        (<code>python -m http.server</code>) and reload.
+      </div>`;
+  }
+}
+
+async function loadParquet() {
+  const base = window.location.origin + window.location.pathname.replace(/\/[^\/]*$/, '');
+  const candidates = [
+    `${base}/../output/events_raw.parquet`,
+    `${window.location.origin}/output/events_raw.parquet`,
+    `${base}/output/events_raw.parquet`
+  ];
+  let lastErr;
+  for (const url of candidates) {
+    try {
+      await conn.query(`CREATE OR REPLACE VIEW events AS SELECT * FROM read_parquet('${url}')`);
+      return;
+    } catch (e) { lastErr = e; }
+  }
+  throw new Error(`events_raw.parquet not found. Tried: ${candidates.join(', ')}. ${lastErr?.message || ''}`);
+}
+
+async function resolveColumns() {
+  const desc = await q(`DESCRIBE events`);
+  const present = new Set(desc.map(r => r.column_name));
+
+  function pick(...candidates) {
+    for (const c of candidates) if (present.has(c)) return c;
+    return null;
+  }
+
+  columns = {
+    site:        pick('CP_SiteName', 'CP_siteName'),
+    siteId:      pick('CP_SiteID', 'CP_SiteId', 'CP_siteID'),
+    pageName:    pick('CP_PageName', 'CP_pageName'),
+    pageUrl:     pick('CP_PageURL', 'CP_PageUrl', 'CP_pageURL'),
+    linkType:    pick('CP_Link_Type', 'CP_LinkType'),
+    linkLabel:   pick('CP_Link_label', 'CP_Link_Label'),
+    linkAddress: pick('CP_Link_address', 'CP_Link_Address'),
+    fileType:    pick('CP_FileType_Label', 'CP_fileType_Label'),
+    fileName:    pick('CP_FileName_Label', 'CP_fileName_Label'),
+    topic:       pick('CP_Topic'),
+    theme:       pick('CP_Theme'),
+    targetOrg:   pick('CP_TargetOrg', 'CP_TargetOrganisation', 'CP_TargetOrganization'),
+    targetRegion:pick('CP_TargetRegion'),
+    gpn:         pick('gpn', 'CP_GPN', 'CP_gpn'),
+    sessionDate: pick('session_date'),
+  };
+
+  if (!columns.linkAddress || !columns.gpn || !columns.sessionDate) {
+    throw new Error('Required columns missing in events_raw.parquet (CP_Link_address, gpn, session_date).');
+  }
+}
+
+async function setInitialDateRange() {
+  const r = await q(`SELECT MIN(${columns.sessionDate}) AS mn, MAX(${columns.sessionDate}) AS mx FROM events`);
+  const row = r[0];
+  if (row && row.mn != null) {
+    dateFilter.from = new Date(row.mn);
+    dateFilter.to   = new Date(row.mx);
+  } else {
+    dateFilter.to   = new Date();
+    dateFilter.from = new Date(); dateFilter.from.setDate(dateFilter.from.getDate() - 30);
+  }
+  document.getElementById('dateFrom').value = fmtDate(dateFilter.from);
+  document.getElementById('dateTo').value   = fmtDate(dateFilter.to);
+}
+
+async function populateFilterDatalists() {
+  const fillList = async (listId, col, limit) => {
+    if (!col) return;
+    const rows = await q(`
+      SELECT DISTINCT ${col} AS v FROM events
+      WHERE ${col} IS NOT NULL AND ${col} <> ''
+      ORDER BY 1 LIMIT ${limit}
+    `);
+    const dl = document.getElementById(listId);
+    dl.innerHTML = rows.map(r => `<option value="${(r.v ?? '').toString().replace(/"/g,'&quot;')}">`).join('');
+  };
+  await fillList('siteList',   columns.site,         2000);
+  await fillList('topicList',  columns.topic,        2000);
+  await fillList('themeList',  columns.theme,        100);
+  await fillList('orgList',    columns.targetOrg,    2000);
+  await fillList('regionList', columns.targetRegion, 500);
+}
+
+// =====================================================================
+// Filter helpers
+// =====================================================================
+function getDateWhere() {
+  if (!dateFilter.from || !dateFilter.to) return '1=1';
+  return `${columns.sessionDate} >= '${fmtDate(dateFilter.from)}' AND ${columns.sessionDate} <= '${fmtDate(dateFilter.to)}'`;
+}
+
+function getFilterClauses() {
+  const v = id => document.getElementById(id).value.trim();
+  const eqClause = (col, val) => col && val ? ` AND ${col} = '${escSql(val)}'` : '';
+  const containsClause = (col, val) => col && val ? ` AND ${col} ILIKE '%${escSql(val)}%'` : '';
+
+  let w = '';
+  w += eqClause(columns.site, v('filterSite'));
+  w += containsClause(columns.pageName, v('filterPage'));
+  w += containsClause(columns.linkLabel, v('filterLink'));
+  w += eqClause(columns.topic, v('filterTopic'));
+  w += eqClause(columns.theme, v('filterTheme'));
+  w += eqClause(columns.targetOrg, v('filterOrg'));
+  w += eqClause(columns.targetRegion, v('filterRegion'));
+  return w;
+}
+
+function whereClause() {
+  return `WHERE ${getDateWhere()}${getFilterClauses()}`;
+}
+
+// =====================================================================
+// Render
+// =====================================================================
+async function renderAll() {
+  setStatus('loading', 'Querying…');
+  try {
+    await Promise.all([renderKPIs(), renderPagesTable(), renderLinksTable()]);
+    const meta = await q(`SELECT MAX(timestamp_cet) AS latest FROM events`);
+    const latest = meta[0]?.latest ? new Date(meta[0].latest).toLocaleString('en-GB', { timeZone: 'Europe/Zurich' }) : '–';
+    document.getElementById('footer').textContent = `Last data point: ${latest} (CET)`;
+    setStatus('ready', 'Ready');
+  } catch (err) {
+    console.error(err);
+    setStatus('error', err.message);
+  }
+}
+
+async function renderKPIs() {
+  const w = whereClause();
+  const dl = columns.fileType
+    ? `COUNT(*) FILTER (WHERE ${columns.fileType} IS NOT NULL AND ${columns.fileType} <> '')`
+    : columns.fileName
+      ? `COUNT(*) FILTER (WHERE ${columns.fileName} IS NOT NULL AND ${columns.fileName} <> '')`
+      : `0`;
+  const sites = columns.site ? `COUNT(DISTINCT ${columns.site})` : `0`;
+  const pages = columns.pageName ? `COUNT(DISTINCT ${columns.pageName})` : `COUNT(DISTINCT ${columns.pageUrl})`;
+  const links = `COUNT(DISTINCT ${columns.linkAddress})`;
+  const totalClicks = `COUNT(*)`;
+  const uniqueClicks = `COUNT(DISTINCT (${columns.gpn} || '|' || COALESCE(${columns.linkAddress}, '')))`;
+
+  const r = (await q(`
+    SELECT ${sites} AS sites, ${pages} AS pages, ${links} AS links,
+           ${totalClicks} AS total_clicks, ${uniqueClicks} AS unique_clicks, ${dl} AS downloads
+    FROM events ${w}
+  `))[0];
+
+  const card = (cls, label, value, sub) =>
+    `<div class="kpi ${cls}">
+      <div class="kpi-label">${label}</div>
+      <div class="kpi-value">${fmt(value)}</div>
+      ${sub ? `<div class="kpi-sub">${sub}</div>` : ''}
+    </div>`;
+
+  document.getElementById('kpiStrip').innerHTML = [
+    card('',        'Number of Sites',         r.sites),
+    card('',        'Number of Pages',         r.pages),
+    card('info',    'Number of Links Clicked', r.links,         'distinct link targets'),
+    card('',        'Total Clicks',            r.total_clicks),
+    card('success', 'Unique Clicks',           r.unique_clicks, 'distinct user × link'),
+    card('warning', 'Total Downloads',         r.downloads,     'events with file type')
+  ].join('');
+}
+
+async function renderPagesTable() {
+  if (!columns.pageName && !columns.pageUrl) {
+    document.getElementById('pagesTable').innerHTML = '<div class="empty-state">No page columns available.</div>';
+    return;
+  }
+  const w = whereClause();
+  const pageCol = columns.pageName || columns.pageUrl;
+  const urlCol  = columns.pageUrl  || columns.pageName;
+
+  const sort = sortState.pages;
+  const rows = await q(`
+    SELECT
+      COALESCE(${pageCol}, '(unknown)') AS page_name,
+      COALESCE(${urlCol},  '')          AS url,
+      COUNT(DISTINCT ${columns.linkAddress}) AS num_links_clicked,
+      COUNT(*) AS total_clicks,
+      COUNT(DISTINCT (${columns.gpn} || '|' || COALESCE(${columns.linkAddress}, ''))) AS unique_clicks
+    FROM events ${w}
+    GROUP BY 1, 2
+    ORDER BY ${sort.col} ${sort.dir.toUpperCase()}
+    LIMIT ${TABLE_LIMIT}
+  `);
+
+  const totals = (await q(`
+    SELECT
+      COUNT(DISTINCT ${columns.linkAddress}) AS num_links_clicked,
+      COUNT(*) AS total_clicks,
+      COUNT(DISTINCT (${columns.gpn} || '|' || COALESCE(${columns.linkAddress}, ''))) AS unique_clicks
+    FROM events ${w}
+  `))[0];
+
+  lastResults.pages = { rows, totals };
+  document.getElementById('pagesMeta').textContent = `Top ${rows.length}`;
+
+  document.getElementById('pagesTable').innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          ${th('pages', 'page_name', 'Page Name')}
+          ${th('pages', 'url', 'URL')}
+          ${th('pages', 'num_links_clicked', 'Number of Links Clicked', true)}
+          ${th('pages', 'total_clicks', 'Total Clicks', true)}
+          ${th('pages', 'unique_clicks', 'Unique Clicks', true)}
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td>${escapeHtml(r.page_name)}</td>
+            <td class="url" title="${escapeHtml(r.url)}">${escapeHtml(r.url)}</td>
+            <td class="num">${fmt(r.num_links_clicked)}</td>
+            <td class="num">${fmt(r.total_clicks)}</td>
+            <td class="num">${fmt(r.unique_clicks)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="2">Overall (filtered)</td>
+          <td class="num">${fmt(totals.num_links_clicked)}</td>
+          <td class="num">${fmt(totals.total_clicks)}</td>
+          <td class="num">${fmt(totals.unique_clicks)}</td>
+        </tr>
+      </tfoot>
+    </table>`;
+}
+
+async function renderLinksTable() {
+  const w = whereClause();
+  const pageCol  = columns.pageName || columns.pageUrl;
+  const labelCol = columns.linkLabel;
+  const dlExpr = columns.fileType
+    ? `COUNT(*) FILTER (WHERE ${columns.fileType} IS NOT NULL AND ${columns.fileType} <> '')`
+    : columns.fileName
+      ? `COUNT(*) FILTER (WHERE ${columns.fileName} IS NOT NULL AND ${columns.fileName} <> '')`
+      : `0`;
+
+  const sort = sortState.links;
+  const rows = await q(`
+    SELECT
+      COALESCE(${pageCol}, '(unknown)') AS page_name,
+      ${labelCol ? `COALESCE(${labelCol}, '(no label)')` : `'(no label)'`} AS link_title,
+      COALESCE(${columns.linkAddress}, '') AS destination,
+      COUNT(*) AS total_clicks,
+      COUNT(DISTINCT ${columns.gpn}) AS unique_clicks,
+      ${dlExpr} AS downloads
+    FROM events ${w}
+    GROUP BY 1, 2, 3
+    ORDER BY ${sort.col} ${sort.dir.toUpperCase()}
+    LIMIT ${TABLE_LIMIT}
+  `);
+
+  const totals = (await q(`
+    SELECT
+      COUNT(*) AS total_clicks,
+      COUNT(DISTINCT (${columns.gpn} || '|' || COALESCE(${columns.linkAddress}, ''))) AS unique_clicks,
+      ${dlExpr} AS downloads
+    FROM events ${w}
+  `))[0];
+
+  lastResults.links = { rows, totals };
+  document.getElementById('linksMeta').textContent = `Top ${rows.length}`;
+
+  document.getElementById('linksTable').innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          ${th('links', 'page_name', 'Page Name')}
+          ${th('links', 'link_title', 'Link Title')}
+          ${th('links', 'destination', 'Destination Link')}
+          ${th('links', 'total_clicks', 'Total Clicks', true)}
+          ${th('links', 'unique_clicks', 'Unique Clicks', true)}
+          ${th('links', 'downloads', 'Total Downloads', true)}
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td>${escapeHtml(r.page_name)}</td>
+            <td class="label" title="${escapeHtml(r.link_title)}">${escapeHtml(r.link_title)}</td>
+            <td class="url"><a href="${escapeAttr(r.destination)}" target="_blank" rel="noopener" title="${escapeHtml(r.destination)}">${escapeHtml(r.destination)}</a></td>
+            <td class="num">${fmt(r.total_clicks)}</td>
+            <td class="num">${fmt(r.unique_clicks)}</td>
+            <td class="num">${fmt(r.downloads)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="3">Overall (filtered)</td>
+          <td class="num">${fmt(totals.total_clicks)}</td>
+          <td class="num">${fmt(totals.unique_clicks)}</td>
+          <td class="num">${fmt(totals.downloads)}</td>
+        </tr>
+      </tfoot>
+    </table>`;
+}
+
+function th(table, col, label, isNum) {
+  const s = sortState[table];
+  const cls = (s.col === col ? 'sorted ' + s.dir : '') + (isNum ? ' num' : '');
+  return `<th class="${cls}" onclick="sortBy('${table}','${col}')">${label}</th>`;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escapeAttr(s) { return escapeHtml(s); }
+
+window.sortBy = function(table, col) {
+  const s = sortState[table];
+  if (s.col === col) s.dir = s.dir === 'asc' ? 'desc' : 'asc';
+  else { s.col = col; s.dir = ['page_name','url','link_title','destination'].includes(col) ? 'asc' : 'desc'; }
+  if (table === 'pages') renderPagesTable(); else renderLinksTable();
+};
+
+// =====================================================================
+// Filter interactions
+// =====================================================================
+function applyPreset(p) {
+  activePreset = p;
+  document.querySelectorAll('.date-preset').forEach(b => b.classList.toggle('active', b.dataset.preset === p));
+  if (p === 'all') {
+    // already set on init; just re-read from inputs in case user cleared
+    q(`SELECT MIN(${columns.sessionDate}) AS mn, MAX(${columns.sessionDate}) AS mx FROM events`).then(r => {
+      const row = r[0];
+      if (row && row.mn != null) {
+        dateFilter.from = new Date(row.mn);
+        dateFilter.to   = new Date(row.mx);
+        document.getElementById('dateFrom').value = fmtDate(dateFilter.from);
+        document.getElementById('dateTo').value   = fmtDate(dateFilter.to);
+        renderAll();
+      }
+    });
+    return;
+  }
+  const months = { '12m': 12, '6m': 6, '3m': 3 }[p];
+  const to = new Date();
+  const from = new Date(); from.setMonth(from.getMonth() - months);
+  dateFilter.from = from; dateFilter.to = to;
+  document.getElementById('dateFrom').value = fmtDate(from);
+  document.getElementById('dateTo').value   = fmtDate(to);
+  renderAll();
+}
+
+function onCustomDate() {
+  const f = document.getElementById('dateFrom').value;
+  const t = document.getElementById('dateTo').value;
+  if (!f || !t) return;
+  dateFilter.from = new Date(f);
+  dateFilter.to   = new Date(t);
+  document.querySelectorAll('.date-preset').forEach(b => b.classList.remove('active'));
+  activePreset = 'custom';
+  debounceRender();
+}
+
+let renderDebounce;
+function debounceRender() {
+  clearTimeout(renderDebounce);
+  renderDebounce = setTimeout(renderAll, 250);
+}
+
+window.onFilterChange = debounceRender;
+
+window.toggleAdvanced = function() {
+  const row = document.getElementById('advancedRow');
+  const caret = document.getElementById('advCaret');
+  row.classList.toggle('hidden');
+  caret.textContent = row.classList.contains('hidden') ? '▸' : '▾';
+};
+
+window.resetFilters = function() {
+  ['filterSite','filterPage','filterLink','filterTopic','filterTheme','filterOrg','filterRegion']
+    .forEach(id => document.getElementById(id).value = '');
+  applyPreset('all');
+};
+
+// =====================================================================
+// XLSX export
+// =====================================================================
+window.exportTable = async function(key) {
+  const data = lastResults[key];
+  if (!data) return;
+  const headers = key === 'pages'
+    ? ['Page Name','URL','Number of Links Clicked','Total Clicks','Unique Clicks']
+    : ['Page Name','Link Title','Destination Link','Total Clicks','Unique Clicks','Total Downloads'];
+  const cols = key === 'pages'
+    ? ['page_name','url','num_links_clicked','total_clicks','unique_clicks']
+    : ['page_name','link_title','destination','total_clicks','unique_clicks','downloads'];
+  const numIdx = key === 'pages' ? [2,3,4] : [3,4,5];
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Click-Tracking Dashboard';
+  wb.created = new Date();
+  const ws = wb.addWorksheet(key === 'pages' ? 'Pages' : 'Links');
+  const headerRow = ws.addRow(headers);
+  headerRow.eachCell(c => {
+    c.font = { bold: true, color: { argb: 'FF404040' } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECEBE4' } };
+    c.alignment = { vertical: 'middle' };
+    c.border = { bottom: { style: 'medium', color: { argb: 'FFE60000' } } };
+  });
+  data.rows.forEach(r => {
+    const row = ws.addRow(cols.map(c => r[c]));
+    numIdx.forEach(i => { row.getCell(i + 1).numFmt = '#,##0'; row.getCell(i + 1).alignment = { horizontal: 'right' }; });
+  });
+  const totalRow = ws.addRow(cols.map((c, i) => {
+    if (i === 0) return 'Overall (filtered)';
+    if (cols[i] in data.totals) return data.totals[cols[i]];
+    return '';
+  }));
+  totalRow.eachCell(c => {
+    c.font = { bold: true };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECEBE4' } };
+    c.border = { top: { style: 'medium', color: { argb: 'FFCCCABC' } } };
+  });
+  numIdx.forEach(i => { totalRow.getCell(i + 1).numFmt = '#,##0'; totalRow.getCell(i + 1).alignment = { horizontal: 'right' }; });
+
+  ws.columns.forEach((col, i) => {
+    let max = headers[i].length;
+    ws.eachRow(row => {
+      const v = row.getCell(i + 1).value;
+      const len = v == null ? 0 : String(v).length;
+      if (len > max) max = len;
+    });
+    col.width = Math.min(Math.max(max + 2, 12), 60);
+  });
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `clicks_${key}_${fmtDate(dateFilter.from)}_${fmtDate(dateFilter.to)}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+// =====================================================================
+// Boot
+// =====================================================================
+init();
+</script>
+</body>
+</html>

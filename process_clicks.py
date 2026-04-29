@@ -32,6 +32,10 @@ Output:
     - output/cdm/dim_page.parquet        (CDM: page dimension)
     - output/cdm/dim_link_type.parquet   (CDM: link type dimension)
     - output/cdm/dim_component.parquet   (CDM: component dimension)
+    - output/cdm/dim_topic.parquet       (CDM: content topic dimension)
+    - output/cdm/dim_theme.parquet       (CDM: content theme dimension)
+    - output/cdm/dim_target_org.parquet  (CDM: audience target org dimension)
+    - output/cdm/dim_target_region.parquet (CDM: audience target region dimension)
     - output/cdm/fact_clicks.parquet     (CDM: fact table with FK integers, anonymized)
 
 Primary Key: timestamp + user_id + session_id + name
@@ -1226,6 +1230,10 @@ def export_cdm_tables(con, output_dir):
     link_label_col = resolve_cp_column(events_cols, ['CP_Link_label', 'CP_link_label'])
     file_name_col = resolve_cp_column(events_cols, ['CP_FileName_Label', 'CP_fileName_Label'])
     file_type_col = resolve_cp_column(events_cols, ['CP_FileType_Label', 'CP_fileType_Label'])
+    topic_col = resolve_cp_column(events_cols, ['CP_Topic', 'CP_topic'])
+    theme_col = resolve_cp_column(events_cols, ['CP_Theme', 'CP_theme'])
+    target_org_col = resolve_cp_column(events_cols, ['CP_TargetOrg', 'CP_targetOrg', 'CP_TargetOrganization'])
+    target_region_col = resolve_cp_column(events_cols, ['CP_TargetRegion', 'CP_targetRegion'])
 
     # Check which HR fields are available
     hr_fields = ['hr_division', 'hr_unit', 'hr_area', 'hr_sector', 'hr_segment',
@@ -1349,6 +1357,54 @@ def export_cdm_tables(con, output_dir):
         )
     """)
 
+    # ── dim_topic ──
+    topic_expr = col_expr(topic_col, "'(none)'")
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE dim_topic AS
+        SELECT
+            ROW_NUMBER() OVER (ORDER BY topic) AS topic_key,
+            topic
+        FROM (
+            SELECT DISTINCT {topic_expr} AS topic FROM events
+        )
+    """)
+
+    # ── dim_theme ──
+    theme_expr = col_expr(theme_col, "'(none)'")
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE dim_theme AS
+        SELECT
+            ROW_NUMBER() OVER (ORDER BY theme) AS theme_key,
+            theme
+        FROM (
+            SELECT DISTINCT {theme_expr} AS theme FROM events
+        )
+    """)
+
+    # ── dim_target_org ──
+    torg_expr = col_expr(target_org_col, "'(none)'")
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE dim_target_org AS
+        SELECT
+            ROW_NUMBER() OVER (ORDER BY target_org) AS target_org_key,
+            target_org
+        FROM (
+            SELECT DISTINCT {torg_expr} AS target_org FROM events
+        )
+    """)
+
+    # ── dim_target_region ──
+    treg_expr = col_expr(target_region_col, "'(none)'")
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE dim_target_region AS
+        SELECT
+            ROW_NUMBER() OVER (ORDER BY target_region) AS target_region_key,
+            target_region
+        FROM (
+            SELECT DISTINCT {treg_expr} AS target_region FROM events
+        )
+    """)
+
     # ── fact_clicks ──
     # Build org hash expression for joining
     if has_hr:
@@ -1379,6 +1435,12 @@ def export_cdm_tables(con, output_dir):
     lt_join = f"COALESCE(e.\"{link_type_col}\", '(unknown)')" if link_type_col else "'(unknown)'"
     comp_join = f"COALESCE(e.\"{component_col}\", '(unknown)')" if component_col else "'(unknown)'"
 
+    # Topic / Theme / TargetOrg / TargetRegion join expressions
+    topic_join = f"COALESCE(e.\"{topic_col}\", '(none)')" if topic_col else "'(none)'"
+    theme_join = f"COALESCE(e.\"{theme_col}\", '(none)')" if theme_col else "'(none)'"
+    torg_join = f"COALESCE(e.\"{target_org_col}\", '(none)')" if target_org_col else "'(none)'"
+    treg_join = f"COALESCE(e.\"{target_region_col}\", '(none)')" if target_region_col else "'(none)'"
+
     # GPN anonymization — HMAC-SHA256 with pepper, same as events_anonymized
     gpn_hash_expr = "hmac_hash(CAST(e.gpn AS VARCHAR))" if 'gpn' in events_cols else "NULL"
 
@@ -1391,6 +1453,10 @@ def export_cdm_tables(con, output_dir):
             dp.page_key,
             dlt.link_type_key,
             dc.component_key,
+            dtop.topic_key,
+            dthm.theme_key,
+            dto.target_org_key,
+            dtr.target_region_key,
             {gpn_hash_expr} AS person_hash,
             e.user_id,
             e.session_id,
@@ -1421,11 +1487,17 @@ def export_cdm_tables(con, output_dir):
             AND {pstat_join} = dp.page_status
         LEFT JOIN dim_link_type dlt ON {lt_join} = dlt.link_type
         LEFT JOIN dim_component dc ON {comp_join} = dc.component_name
+        LEFT JOIN dim_topic dtop ON {topic_join} = dtop.topic
+        LEFT JOIN dim_theme dthm ON {theme_join} = dthm.theme
+        LEFT JOIN dim_target_org dto ON {torg_join} = dto.target_org
+        LEFT JOIN dim_target_region dtr ON {treg_join} = dtr.target_region
     """)
 
     # Export all CDM tables to Parquet
     cdm_tables = ['dim_date', 'dim_organization', 'dim_site', 'dim_page',
-                  'dim_link_type', 'dim_component', 'fact_clicks']
+                  'dim_link_type', 'dim_component',
+                  'dim_topic', 'dim_theme', 'dim_target_org', 'dim_target_region',
+                  'fact_clicks']
 
     for table in cdm_tables:
         out_file = cdm_dir / f'{table}.parquet'
@@ -1803,7 +1875,9 @@ def process_clicks(input_file=None, full_refresh=False):
                          'video_metadata', 'video_engagement']:
         con.execute(f"DROP TABLE IF EXISTS {video_table}")
     for cdm_table in ['dim_date', 'dim_organization', 'dim_site', 'dim_page',
-                       'dim_link_type', 'dim_component', 'fact_clicks']:
+                       'dim_link_type', 'dim_component',
+                       'dim_topic', 'dim_theme', 'dim_target_org', 'dim_target_region',
+                       'fact_clicks']:
         con.execute(f"DROP TABLE IF EXISTS {cdm_table}")
     con.execute("VACUUM")
     con.execute("CHECKPOINT")

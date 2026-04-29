@@ -27,6 +27,10 @@ Application Insights (KQL)
               +---> dim_page.parquet
               +---> dim_link_type.parquet
               +---> dim_component.parquet
+              +---> dim_topic.parquet
+              +---> dim_theme.parquet
+              +---> dim_target_org.parquet
+              +---> dim_target_region.parquet
               +---> fact_clicks.parquet
 ```
 
@@ -36,7 +40,7 @@ Application Insights (KQL)
 
 ### Source
 
-Export click events from Application Insights using the KQL query in `clicks_query.kql`. The query targets `customEvents` where `name == "click_event"` — no page filter is applied.
+Export click events from Application Insights using the KQL query in `clicks_query.kql`. The query targets `customEvents` where `name == "click_event"` and restricts results to **`CP_PageStatus == "Published"`** — drafts, archived, and other non-published states are excluded.
 
 ### File Naming Convention
 
@@ -75,11 +79,28 @@ CSV preserves the full `dd/MM/yyyy HH:mm:ss.fffffff` timestamp from App Insights
 | `CP_Link_label` | CustomProps | Label text of clicked element |
 | `CP_ComponentName` | CustomProps | Component that generated the click |
 | `CP_SiteName` | CustomProps | Intranet site name |
+| `CP_PageName` | CustomProps | Human-readable page name (used in dashboards) |
 | `CP_PageURL` | CustomProps | Page where click occurred |
+| `CP_PageStatus` | CustomProps | Page lifecycle state — pipeline filters to `Published` only |
 | `CP_ContentType` | CustomProps | Content type of the page |
 | `CP_FileType_Label` | CustomProps | File type (for downloads) |
 | `CP_FileName_Label` | CustomProps | File name (for downloads) |
 | `CP_Link_address` | CustomProps | Target URL of the click |
+| `CP_Link_ancestors` | CustomProps | DOM ancestor chain for the clicked element |
+| `CP_NewsCategory` | CustomProps | News category (article pages) |
+| `CP_PublishingDate` | CustomProps | Page publishing date |
+| `CP_Topic` | CustomProps | Content topic classification (~66% of events) |
+| `CP_Theme` | CustomProps | Content theme classification (~98% of events, 14 distinct themes) |
+| `CP_TargetOrg` | CustomProps | Target organisational unit (audience targeting) |
+| `CP_TargetRegion` | CustomProps | Target region (audience targeting) |
+| `CP_mfLst` | CustomProps | Internal feature flag / list membership (~37% of events) |
+| `CP_Video_Action` | CustomProps | Video event action: resume, pause, mousedown, ended, play |
+| `CP_Video_Id` | CustomProps | Video identifier |
+| `CP_Video_Title` | CustomProps | Video title |
+| `CP_Video_Type` | CustomProps | Video type (e.g. VIDEO) |
+| `CP_Video_Duration` | CustomProps | Total video duration in seconds |
+| `CP_Video_PlayedTime` | CustomProps | Played position in seconds |
+| `CP_Video_Address` | CustomProps | Video source URL |
 
 ---
 
@@ -273,6 +294,12 @@ After the flat Parquet files, the pipeline also exports a set of star-schema dim
 | `dim_page` | page_id + page_name + page_url + content_type + page_status | `page_key`, `page_id`, `page_name`, `page_url`, `content_type`, `page_status` |
 | `dim_link_type` | link_type | `link_type_key`, `link_type` |
 | `dim_component` | component_name | `component_key`, `component_name` |
+| `dim_topic` | topic | `topic_key`, `topic` |
+| `dim_theme` | theme | `theme_key`, `theme` |
+| `dim_target_org` | target_org | `target_org_key`, `target_org` |
+| `dim_target_region` | target_region | `target_region_key`, `target_region` |
+
+Missing values in `topic` / `theme` / `target_org` / `target_region` are normalised to the sentinel `(none)` (vs. `(unknown)` for required fields like link_type).
 
 #### Fact Table: fact_clicks
 
@@ -284,6 +311,10 @@ After the flat Parquet files, the pipeline also exports a set of star-schema dim
 | `page_key` | INTEGER | FK → dim_page |
 | `link_type_key` | INTEGER | FK → dim_link_type |
 | `component_key` | INTEGER | FK → dim_component |
+| `topic_key` | INTEGER | FK → dim_topic |
+| `theme_key` | INTEGER | FK → dim_theme |
+| `target_org_key` | INTEGER | FK → dim_target_org |
+| `target_region_key` | INTEGER | FK → dim_target_region |
 | `person_hash` | VARCHAR | SHA-256 hashed GPN (anonymized) |
 | `user_id` | VARCHAR | User identifier |
 | `session_id` | VARCHAR | Session identifier |
@@ -314,6 +345,10 @@ In Power BI, import each parquet file as a separate table and create relationshi
 - `fact_clicks[page_key]` → `dim_page[page_key]`
 - `fact_clicks[link_type_key]` → `dim_link_type[link_type_key]`
 - `fact_clicks[component_key]` → `dim_component[component_key]`
+- `fact_clicks[topic_key]` → `dim_topic[topic_key]`
+- `fact_clicks[theme_key]` → `dim_theme[theme_key]`
+- `fact_clicks[target_org_key]` → `dim_target_org[target_org_key]`
+- `fact_clicks[target_region_key]` → `dim_target_region[target_region_key]`
 
 This star schema provides better query performance and compression in Power BI compared to the flat denormalized files.
 
