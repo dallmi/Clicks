@@ -11,9 +11,22 @@
 //   CustomProps keys:  SiteID, SiteName, PageId, PageName, PageURL, PageStatus,
 //                      ComponentName, ContentOwner, ContentType, Email, GPN,
 //                      FileName_Label, FileType_Label, Link_Type, Link_address,
-//                      Link_ancestors, Link_label, NewsCategory, PublishingDate
+//                      Link_ancestors, Link_label, NewsCategory, PublishingDate,
+//                      Topic, Theme, TargetOrg, TargetRegion, mfLst,
+//                      Video_Action, Video_Id, Video_Title, Video_Type,
+//                      Video_Duration, Video_PlayedTime, Video_Address
+//
+// Notes on values observed in production data:
+//   Link_Type:   span, div, anchor, icon, button, image, video (plus blank)
+//   PageStatus:  Published (filtered to this), Draft, Archived, ...
+//   Link_label:  free-text; "NO_LABEL" sentinel used when label is absent
+//   Video_*:     present only on video-related events (~10% of events)
+//   Topic/Theme/TargetOrg/TargetRegion: present on news/article pages (~66% of events)
 //
 // Output: All CustomProps keys become columns with CP_ prefix.
+//
+// FILTER: Only events on pages with PageStatus == "Published" are returned.
+//         Drafts, archived, and other non-published states are excluded.
 //
 // HOW TO USE: Copy from "set truncationmaxrecords" to "order by"
 //
@@ -33,6 +46,8 @@ let ClickData = customEvents
     // --- customDimensions has ONE key: CustomProps (JSON string with all fields) ---
     | extend CustomPropsRaw = tostring(cd.CustomProps)
     | extend CP = iff(isnotempty(CustomPropsRaw) and CustomPropsRaw startswith "{", todynamic(CustomPropsRaw), dynamic({}))
+    // --- Restrict to Published pages only (drop drafts, archived, etc.) ---
+    | where tostring(CP.PageStatus) == "Published"
     | serialize
     | extend rowId = row_number()
     // --- Expand CustomProps keys (flat key-value pairs) ---
@@ -76,6 +91,7 @@ let ClickData = customEvents
     | extend cd = todynamic(customDimensions)
     | extend CustomPropsRaw = tostring(cd.CustomProps)
     | extend CP = iff(isnotempty(CustomPropsRaw) and CustomPropsRaw startswith "{", todynamic(CustomPropsRaw), dynamic({}))
+    | where tostring(CP.PageStatus) == "Published"
     | serialize
     | extend rowId = row_number()
     | extend cpKeys = bag_keys(CP)
@@ -96,6 +112,40 @@ ClickData
 | order by ['timestamp [UTC]'] desc
 
 
+// --- QUERY E: Filter by URL pattern (change UrlPattern value) ---
+// Output is identical in shape to the default query → drop the CSV into input/
+// and run process_clicks.py without any code changes.
+// Filter operators: contains | startswith | endswith | matches regex | has_any
+set truncationmaxrecords = 500000;
+let TimeRange = 90d;
+let UrlPattern = "/news/";
+let CustomPropsPrefix = "CP_";
+let ClickData = customEvents
+    | where timestamp >= ago(TimeRange)
+    | where name == 'click_event'
+    | extend cd = todynamic(customDimensions)
+    | extend CustomPropsRaw = tostring(cd.CustomProps)
+    | extend CP = iff(isnotempty(CustomPropsRaw) and CustomPropsRaw startswith "{", todynamic(CustomPropsRaw), dynamic({}))
+    | where tostring(CP.PageStatus) == "Published"
+    | where tostring(CP.PageURL) contains UrlPattern
+    | serialize
+    | extend rowId = row_number()
+    | extend cpKeys = bag_keys(CP)
+    | extend cpKeys = iff(array_length(cpKeys) == 0, dynamic(["__no_cp__"]), cpKeys)
+    | mv-expand cpKey = cpKeys to typeof(string)
+    | extend cpValue = tostring(CP[cpKey])
+    | extend kvBag = iff(cpKey == "__no_cp__", dynamic({}), pack(strcat(CustomPropsPrefix, cpKey), cpValue))
+    | summarize take_any(timestamp), take_any(name), take_any(client_CountryOrRegion), take_any(user_Id), take_any(session_Id), merged = make_bag(kvBag) by rowId
+    | extend finalBag = coalesce(merged, dynamic({}));
+ClickData
+| evaluate bag_unpack(finalBag)
+| project-away rowId, merged
+| extend ['timestamp [UTC]'] = format_datetime(timestamp, 'dd/MM/yyyy HH:mm:ss.fffffff')
+| project-away timestamp
+| project-reorder ['timestamp [UTC]'], name, client_CountryOrRegion, user_Id, session_Id
+| order by ['timestamp [UTC]'] desc
+
+
 // --- QUERY D: Filter by specific email (change EmailFilter value) ---
 // NOTE: Uses plain-text GPN/Email for filtering — not anonymized
 set truncationmaxrecords = 500000;
@@ -108,6 +158,7 @@ let ClickData = customEvents
     | extend cd = todynamic(customDimensions)
     | extend CustomPropsRaw = tostring(cd.CustomProps)
     | extend CP = iff(isnotempty(CustomPropsRaw) and CustomPropsRaw startswith "{", todynamic(CustomPropsRaw), dynamic({}))
+    | where tostring(CP.PageStatus) == "Published"
     | where tostring(CP.Email) contains EmailFilter
     | serialize
     | extend rowId = row_number()
