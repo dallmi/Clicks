@@ -15,7 +15,7 @@ Application Insights (KQL)
   input/*.xlsx / *.csv        <-- you drop files here
         |
         v
-  process_clicks.py            <-- delta detection + upsert + enrichment
+  scripts/process_clicks.py    <-- delta detection + upsert + enrichment
         |
         +---> data/clicks.db                  (DuckDB database)
         +---> output/events_raw.parquet       (all events with HR fields)
@@ -114,22 +114,24 @@ pip install duckdb pandas openpyxl
 
 ### Usage
 
+Run from the project root:
+
 ```bash
 # Delta mode (default) -- process only new or changed files
-python process_clicks.py
+python scripts/process_clicks.py
 
 # Force-process a specific file (bypasses delta check)
-python process_clicks.py input/clicks_export_2026_02_25.xlsx
+python scripts/process_clicks.py input/clicks_export_2026_02_25.xlsx
 
 # Full refresh -- delete database and reprocess all files from scratch
-python process_clicks.py --full-refresh
+python scripts/process_clicks.py --full-refresh
 ```
 
 ### Typical Workflow
 
 1. Export data from App Insights (daily or weekly)
 2. Save the `.xlsx` or `.csv` file to `input/`
-3. Run `python process_clicks.py`
+3. Run `python scripts/process_clicks.py`
 
 ---
 

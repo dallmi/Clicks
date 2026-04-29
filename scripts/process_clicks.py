@@ -9,10 +9,10 @@ HR data from hr_history.parquet via GPN, and exports Parquet files for reporting
 Unlike the CampaignWe pipeline, this does NOT filter by page URL and does NOT
 classify clicks into action types. All click events are retained as-is.
 
-Usage:
-    python process_clicks.py                     # Process only new/changed files (delta)
-    python process_clicks.py input/export.xlsx   # Force-process a specific file
-    python process_clicks.py --full-refresh      # Delete DB and reprocess all files
+Usage (run from project root):
+    python scripts/process_clicks.py                     # Process only new/changed files (delta)
+    python scripts/process_clicks.py input/export.xlsx   # Force-process a specific file
+    python scripts/process_clicks.py --full-refresh      # Delete DB and reprocess all files
 
 Input folder: input/
     Place your KQL export files here with date suffix _YYYY_MM_DD, e.g.:
@@ -1755,14 +1755,14 @@ def process_clicks(input_file=None, full_refresh=False):
         input_file: Specific file to process, or None to auto-detect
         full_refresh: If True, delete DB and reprocess all files
     """
-    script_dir = Path(__file__).parent
-    input_dir = script_dir / 'input'
-    data_dir = script_dir / 'data'
-    output_dir = script_dir / 'output'
+    project_root = Path(__file__).resolve().parent.parent
+    input_dir = project_root / 'input'
+    data_dir = project_root / 'data'
+    output_dir = project_root / 'output'
     db_path = data_dir / 'clicks.db'
 
     # HR history parquet from SearchAnalytics
-    hr_parquet_path = script_dir.parent / 'SearchAnalytics' / 'output' / 'hr_history.parquet'
+    hr_parquet_path = project_root.parent / 'SearchAnalytics' / 'output' / 'hr_history.parquet'
 
     # Create directories
     input_dir.mkdir(parents=True, exist_ok=True)

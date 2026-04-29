@@ -511,7 +511,7 @@ async function init() {
     document.getElementById('errorState').innerHTML = `
       <div class="error-msg">
         <strong>Could not load dashboard:</strong> ${err.message}<br><br>
-        Run <code>python process_clicks.py</code> in the project root to regenerate
+        Run <code>python scripts/process_clicks.py</code> in the project root to regenerate
         <code>output/events_raw.parquet</code>, then start a local web server
         (<code>python -m http.server</code>) and reload.
       </div>`;

@@ -13,3 +13,9 @@ output/*.parquet
 # Python
 __pycache__/
 *.pyc
+
+# macOS
+.DS_Store
+
+# Local image assets (not for git)
+Bilder/

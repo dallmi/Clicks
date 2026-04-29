@@ -114,7 +114,7 @@ ClickData
 
 // --- QUERY E: Filter by URL pattern (change UrlPattern value) ---
 // Output is identical in shape to the default query → drop the CSV into input/
-// and run process_clicks.py without any code changes.
+// and run scripts/process_clicks.py without any code changes.
 // Filter operators: contains | startswith | endswith | matches regex | has_any
 set truncationmaxrecords = 500000;
 let TimeRange = 90d;
