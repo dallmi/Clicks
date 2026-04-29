@@ -141,15 +141,15 @@ body {
   align-items: end;
 }
 .filter-group { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
-.filter-group label {
+.filter-group > label {
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--medium-gray);
   font-weight: 600;
 }
-.filter-group input,
-.filter-group select {
+.filter-group > input,
+.filter-group > select {
   padding: 0.4rem 0.5rem;
   border: 1px solid var(--light-gray);
   border-radius: 2px;
@@ -158,8 +158,8 @@ body {
   font-family: inherit;
   width: 100%;
 }
-.filter-group input:focus,
-.filter-group select:focus { outline: none; border-color: var(--primary); }
+.filter-group > input:focus,
+.filter-group > select:focus { outline: none; border-color: var(--primary); }
 
 /* ---- Multi-Select Dropdown ---- */
 .multi-select { position: relative; min-width: 0; }
@@ -1235,63 +1235,137 @@ window.resetFilters = function() {
 };
 
 // =====================================================================
-// XLSX export
+// XLSX export — corporate brand styling (red header separator, Arial,
+// warm grays, hyperlinks, freeze panes, auto-filter)
 // =====================================================================
+const URL_RE = /^https?:\/\//i;
+
+function toCellValue(v) {
+  if (typeof v === 'bigint') return Number(v);
+  return v;
+}
+
 window.exportTable = async function(key) {
   const data = lastResults[key];
-  if (!data) return;
-  const headers = key === 'pages'
-    ? ['Page Name','URL','Number of Links Clicked','Total Clicks','Unique Clicks','Total Downloads']
-    : ['Page URL','Page Name','Link Title','Destination Link','Total Clicks','Unique Clicks','Total Downloads'];
-  const cols = key === 'pages'
-    ? ['page_name','url','num_links_clicked','total_clicks','unique_clicks','downloads']
-    : ['page_url','page_name','link_title','destination','total_clicks','unique_clicks','downloads'];
-  const numIdx = key === 'pages' ? [2,3,4,5] : [4,5,6];
+  if (!data || !data.rows || data.rows.length === 0) {
+    alert('No data available to export. Please wait for the dashboard to finish loading or adjust your filters.');
+    return;
+  }
 
-  const wb = new ExcelJS.Workbook();
-  wb.creator = 'Click-Tracking Dashboard';
-  wb.created = new Date();
-  const ws = wb.addWorksheet(key === 'pages' ? 'Pages' : 'Links');
-  const headerRow = ws.addRow(headers);
-  headerRow.eachCell(c => {
-    c.font = { bold: true, color: { argb: 'FF404040' } };
-    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECEBE4' } };
-    c.alignment = { vertical: 'middle' };
-    c.border = { bottom: { style: 'medium', color: { argb: 'FFE60000' } } };
-  });
-  data.rows.forEach(r => {
-    const row = ws.addRow(cols.map(c => r[c]));
-    numIdx.forEach(i => { row.getCell(i + 1).numFmt = '#,##0'; row.getCell(i + 1).alignment = { horizontal: 'right' }; });
-  });
-  const totalRow = ws.addRow(cols.map((c, i) => {
-    if (i === 0) return 'Overall (filtered)';
-    if (cols[i] in data.totals) return data.totals[cols[i]];
-    return '';
-  }));
-  totalRow.eachCell(c => {
-    c.font = { bold: true };
-    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECEBE4' } };
-    c.border = { top: { style: 'medium', color: { argb: 'FFCCCABC' } } };
-  });
-  numIdx.forEach(i => { totalRow.getCell(i + 1).numFmt = '#,##0'; totalRow.getCell(i + 1).alignment = { horizontal: 'right' }; });
+  const SPEC = key === 'pages'
+    ? {
+        sheet:   'Pages',
+        headers: ['Page Name', 'URL', 'Number of Links Clicked', 'Total Clicks', 'Unique Clicks', 'Total Downloads'],
+        cols:    ['page_name', 'url', 'num_links_clicked', 'total_clicks', 'unique_clicks', 'downloads'],
+        numIdx:  [2, 3, 4, 5],
+        linkIdx: [1],
+        totalsLabelSpan: 2,
+      }
+    : {
+        sheet:   'Links',
+        headers: ['Page URL', 'Page Name', 'Link Title', 'Destination Link', 'Total Clicks', 'Unique Clicks', 'Total Downloads'],
+        cols:    ['page_url', 'page_name', 'link_title', 'destination', 'total_clicks', 'unique_clicks', 'downloads'],
+        numIdx:  [4, 5, 6],
+        linkIdx: [0, 3],
+        totalsLabelSpan: 4,
+      };
 
-  ws.columns.forEach((col, i) => {
-    let max = headers[i].length;
-    ws.eachRow(row => {
-      const v = row.getCell(i + 1).value;
-      const len = v == null ? 0 : String(v).length;
-      if (len > max) max = len;
+  try {
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Click-Tracking Dashboard';
+    wb.created = new Date();
+    const ws = wb.addWorksheet(SPEC.sheet);
+
+    // ---- Header row ----
+    const headerRow = ws.addRow(SPEC.headers);
+    headerRow.height = 30;
+    headerRow.eachCell((cell, colIdx) => {
+      const isNum = SPEC.numIdx.includes(colIdx - 1);
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF404040' } };
+      cell.font = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+      cell.alignment = { horizontal: isNum ? 'right' : 'left', vertical: 'middle', wrapText: true };
+      cell.border = {
+        bottom: { style: 'medium', color: { argb: 'FFE60000' } },
+        right:  { style: 'thin',   color: { argb: 'FFCCCABC' } },
+      };
     });
-    col.width = Math.min(Math.max(max + 2, 12), 60);
-  });
 
-  const buf = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `clicks_${key}_${fmtDate(dateFilter.from)}_${fmtDate(dateFilter.to)}.xlsx`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+    // ---- Data rows ----
+    data.rows.forEach((r, idx) => {
+      const row = ws.addRow(SPEC.cols.map(c => toCellValue(r[c])));
+      row.eachCell({ includeEmpty: true }, (cell, colIdx) => {
+        const i = colIdx - 1;
+        const isNum = SPEC.numIdx.includes(i);
+        const isLink = SPEC.linkIdx.includes(i);
+        const raw = cell.value;
+
+        if (isLink && typeof raw === 'string' && URL_RE.test(raw)) {
+          cell.value = { text: raw, hyperlink: raw };
+          cell.font = { name: 'Arial', size: 10, color: { argb: 'FF0C7EC6' }, underline: true };
+        } else {
+          cell.font = { name: 'Arial', size: 10, color: { argb: 'FF000000' } };
+        }
+        cell.alignment = { horizontal: isNum ? 'right' : 'left', vertical: 'top', wrapText: true };
+        cell.border = {
+          bottom: { style: 'thin', color: { argb: 'FFCCCABC' } },
+          right:  { style: 'thin', color: { argb: 'FFCCCABC' } },
+        };
+        if (isNum) cell.numFmt = '#,##0';
+        if (idx % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8F7F2' } };
+      });
+    });
+
+    // ---- Totals row ----
+    const totalsValues = SPEC.cols.map((c, i) => {
+      if (i === 0) return 'Overall (filtered)';
+      if (i < SPEC.totalsLabelSpan) return '';
+      if (data.totals && c in data.totals) return toCellValue(data.totals[c]);
+      return '';
+    });
+    const totalRow = ws.addRow(totalsValues);
+    if (SPEC.totalsLabelSpan > 1) ws.mergeCells(totalRow.number, 1, totalRow.number, SPEC.totalsLabelSpan);
+    totalRow.eachCell({ includeEmpty: true }, (cell, colIdx) => {
+      const i = colIdx - 1;
+      const isNum = SPEC.numIdx.includes(i);
+      cell.font = { name: 'Arial', bold: true, size: 10, color: { argb: 'FF000000' } };
+      cell.alignment = { horizontal: isNum ? 'right' : 'left', vertical: 'middle' };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECEBE4' } };
+      cell.border = {
+        top:    { style: 'medium', color: { argb: 'FFE60000' } },
+        bottom: { style: 'thin',   color: { argb: 'FFCCCABC' } },
+        right:  { style: 'thin',   color: { argb: 'FFCCCABC' } },
+      };
+      if (isNum) cell.numFmt = '#,##0';
+    });
+
+    // ---- Column widths (sample first 100 rows) ----
+    ws.columns.forEach((col, i) => {
+      let max = SPEC.headers[i].length;
+      const sample = Math.min(data.rows.length, 100);
+      for (let j = 0; j < sample; j++) {
+        const v = data.rows[j][SPEC.cols[i]];
+        const len = v == null ? 0 : String(v).length;
+        if (len > max) max = len;
+      }
+      col.width = Math.min(Math.max(max + 2, 12), 50);
+    });
+
+    // ---- Freeze header + auto-filter ----
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: SPEC.headers.length } };
+
+    // ---- Download ----
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `clicks_${key}_${fmtDate(dateFilter.from)}_${fmtDate(dateFilter.to)}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  } catch (err) {
+    console.error('XLSX export failed:', err);
+    alert('XLSX export failed: ' + err.message);
+  }
 };
 
 // =====================================================================
