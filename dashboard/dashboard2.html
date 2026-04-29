@@ -120,6 +120,100 @@ body {
 .filter-group input:focus,
 .filter-group select:focus { outline: none; border-color: var(--primary); }
 
+/* ---- Multi-Select Dropdown ---- */
+.multi-select { position: relative; min-width: 0; }
+.ms-trigger {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--light-gray);
+  border-radius: 2px;
+  background: var(--white);
+  font-size: 0.8rem;
+  font-family: inherit;
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+.ms-trigger:hover { border-color: var(--medium-gray); }
+.ms-trigger.open { border-color: var(--primary); }
+.ms-label {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--medium-gray);
+}
+.ms-label.has-selection { color: var(--dark-gray); }
+.ms-caret { color: var(--medium-gray); margin-left: 0.4rem; font-size: 0.7rem; }
+.ms-popover {
+  position: absolute; top: calc(100% + 2px); left: 0;
+  width: max(100%, 280px);
+  max-height: 360px;
+  background: var(--white);
+  border: 1px solid var(--light-gray);
+  border-radius: 2px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  z-index: 100;
+  display: flex; flex-direction: column;
+}
+.ms-popover.hidden { display: none; }
+.ms-search {
+  padding: 0.4rem 0.5rem;
+  border: none;
+  border-bottom: 1px solid var(--light-gray);
+  font-size: 0.8rem;
+  font-family: inherit;
+  width: 100%;
+  outline: none;
+  box-sizing: border-box;
+}
+.ms-actions {
+  display: flex; gap: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--light-gray);
+  background: var(--bg);
+}
+.ms-action {
+  font-size: 0.7rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--light-gray);
+  background: var(--white);
+  color: var(--medium-gray);
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ms-action:hover { color: var(--dark-gray); border-color: var(--medium-gray); }
+.ms-list {
+  flex: 1; overflow-y: auto;
+  padding: 0.2rem 0;
+}
+.ms-option {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  user-select: none;
+}
+.ms-option:hover { background: var(--surface); }
+.ms-option input[type="checkbox"] { cursor: pointer; margin: 0; flex-shrink: 0; }
+.ms-option .ms-text {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ms-empty {
+  padding: 0.6rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--medium-gray);
+  text-align: center;
+}
+.ms-overflow {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.7rem;
+  color: var(--medium-gray);
+  text-align: center;
+  border-top: 1px solid var(--surface);
+}
+
 .date-presets { display: flex; gap: 0.4rem; }
 .date-range { display: flex; gap: 0.4rem; align-items: center; }
 .date-range input { flex: 1; }
@@ -357,16 +451,15 @@ tfoot td {
     </div>
     <div class="filter-group">
       <label>Site Name</label>
-      <input list="siteList" id="filterSite" placeholder="All" oninput="onFilterChange()">
-      <datalist id="siteList"></datalist>
+      <div class="multi-select" id="ms_filterSite"></div>
     </div>
     <div class="filter-group">
       <label>Page Name</label>
-      <input id="filterPage" placeholder="Contains…" oninput="onFilterChange()">
+      <div class="multi-select" id="ms_filterPage"></div>
     </div>
     <div class="filter-group">
       <label>Link Label</label>
-      <input id="filterLink" placeholder="Contains…" oninput="onFilterChange()">
+      <div class="multi-select" id="ms_filterLink"></div>
     </div>
     <button class="advanced-toggle" id="advBtn" onclick="toggleAdvanced()">
       <span id="advCaret">▸</span> Advanced
@@ -468,6 +561,152 @@ async function q(sql) {
   const res = await conn.query(sql);
   return res.toArray().map(r => Object.fromEntries(Object.entries(r)));
 }
+
+// =====================================================================
+// Multi-Select component (search + multi-pick)
+// =====================================================================
+class MultiSelect {
+  static instances = [];
+  static _docBound = false;
+
+  constructor(rootId, opts = {}) {
+    this.root = document.getElementById(rootId);
+    this.placeholder = opts.placeholder || 'All';
+    this.onChange = opts.onChange || (() => {});
+    this.options = [];
+    this.selected = new Set();
+    this.search = '';
+    this.open = false;
+    this.maxRendered = 500;
+    this.render();
+    MultiSelect.instances.push(this);
+    if (!MultiSelect._docBound) {
+      document.addEventListener('click', e => {
+        MultiSelect.instances.forEach(ms => {
+          if (ms.open && !ms.root.contains(e.target)) ms.toggleOpen(false);
+        });
+      });
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') MultiSelect.instances.forEach(ms => ms.toggleOpen(false));
+      });
+      MultiSelect._docBound = true;
+    }
+  }
+
+  setOptions(values) {
+    this.options = (values || []).map(v => String(v));
+    this.renderList();
+  }
+
+  getValues() { return Array.from(this.selected); }
+
+  clear() {
+    this.selected.clear();
+    this.search = '';
+    if (this.searchEl) this.searchEl.value = '';
+    this.updateLabel();
+    this.renderList();
+  }
+
+  toggleOpen(force) {
+    const next = typeof force === 'boolean' ? force : !this.open;
+    if (next === this.open) return;
+    this.open = next;
+    this.popoverEl.classList.toggle('hidden', !this.open);
+    this.triggerEl.classList.toggle('open', this.open);
+    if (this.open) {
+      MultiSelect.instances.forEach(ms => { if (ms !== this) ms.toggleOpen(false); });
+      setTimeout(() => this.searchEl.focus(), 0);
+    }
+  }
+
+  filteredOptions() {
+    if (!this.search) return this.options;
+    const s = this.search;
+    return this.options.filter(v => v.toLowerCase().includes(s));
+  }
+
+  render() {
+    this.root.innerHTML = `
+      <button type="button" class="ms-trigger">
+        <span class="ms-label">${escapeHtml(this.placeholder)}</span>
+        <span class="ms-caret">▾</span>
+      </button>
+      <div class="ms-popover hidden">
+        <input class="ms-search" type="text" placeholder="Search…">
+        <div class="ms-actions">
+          <button type="button" class="ms-action" data-action="all">Select all</button>
+          <button type="button" class="ms-action" data-action="clear">Clear</button>
+        </div>
+        <div class="ms-list"></div>
+      </div>`;
+    this.triggerEl = this.root.querySelector('.ms-trigger');
+    this.popoverEl = this.root.querySelector('.ms-popover');
+    this.searchEl  = this.root.querySelector('.ms-search');
+    this.listEl    = this.root.querySelector('.ms-list');
+    this.labelEl   = this.root.querySelector('.ms-label');
+
+    this.triggerEl.addEventListener('click', e => { e.stopPropagation(); this.toggleOpen(); });
+    this.searchEl.addEventListener('input', e => {
+      this.search = e.target.value.toLowerCase();
+      this.renderList();
+    });
+    this.searchEl.addEventListener('click', e => e.stopPropagation());
+    this.root.querySelector('[data-action="all"]').addEventListener('click', e => {
+      e.stopPropagation();
+      this.filteredOptions().forEach(v => this.selected.add(v));
+      this.updateLabel(); this.renderList(); this.onChange();
+    });
+    this.root.querySelector('[data-action="clear"]').addEventListener('click', e => {
+      e.stopPropagation();
+      this.selected.clear();
+      this.updateLabel(); this.renderList(); this.onChange();
+    });
+  }
+
+  renderList() {
+    const opts = this.filteredOptions();
+    if (!opts.length) {
+      this.listEl.innerHTML = '<div class="ms-empty">No matches</div>';
+      return;
+    }
+    const visible = opts.slice(0, this.maxRendered);
+    const overflow = opts.length > this.maxRendered;
+    const html = visible.map(v => {
+      const checked = this.selected.has(v) ? 'checked' : '';
+      const safe = escapeHtml(v);
+      const attrV = String(v).replace(/"/g, '&quot;');
+      return `<label class="ms-option"><input type="checkbox" ${checked} data-value="${attrV}"><span class="ms-text" title="${safe}">${safe}</span></label>`;
+    }).join('');
+    this.listEl.innerHTML = html + (overflow
+      ? `<div class="ms-overflow">${opts.length - this.maxRendered} more — refine search to narrow</div>`
+      : '');
+    this.listEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', e => {
+        e.stopPropagation();
+        const val = cb.dataset.value;
+        if (cb.checked) this.selected.add(val); else this.selected.delete(val);
+        this.updateLabel();
+        this.onChange();
+      });
+    });
+  }
+
+  updateLabel() {
+    if (this.selected.size === 0) {
+      this.labelEl.textContent = this.placeholder;
+      this.labelEl.classList.remove('has-selection');
+    } else if (this.selected.size === 1) {
+      this.labelEl.textContent = Array.from(this.selected)[0];
+      this.labelEl.classList.add('has-selection');
+    } else {
+      this.labelEl.textContent = `${this.selected.size} selected`;
+      this.labelEl.classList.add('has-selection');
+    }
+  }
+}
+
+const multiSelects = {};
 
 // =====================================================================
 // Init
@@ -581,22 +820,42 @@ async function setInitialDateRange() {
   document.getElementById('dateTo').value   = fmtDate(dateFilter.to);
 }
 
+async function loadDistinctValues(col, limit) {
+  if (!col) return [];
+  const rows = await q(`
+    SELECT DISTINCT ${col} AS v FROM events
+    WHERE ${col} IS NOT NULL AND ${col} <> ''
+    ORDER BY 1 LIMIT ${limit}
+  `);
+  return rows.map(r => String(r.v ?? ''));
+}
+
 async function populateFilterDatalists() {
+  // Datalists for the simple <input list="..."> fields in the Advanced row
   const fillList = async (listId, col, limit) => {
     if (!col) return;
-    const rows = await q(`
-      SELECT DISTINCT ${col} AS v FROM events
-      WHERE ${col} IS NOT NULL AND ${col} <> ''
-      ORDER BY 1 LIMIT ${limit}
-    `);
+    const values = await loadDistinctValues(col, limit);
     const dl = document.getElementById(listId);
-    dl.innerHTML = rows.map(r => `<option value="${(r.v ?? '').toString().replace(/"/g,'&quot;')}">`).join('');
+    dl.innerHTML = values.map(v => `<option value="${v.replace(/"/g,'&quot;')}">`).join('');
   };
-  await fillList('siteList',   columns.site,         2000);
   await fillList('topicList',  columns.topic,        2000);
   await fillList('themeList',  columns.theme,        100);
   await fillList('orgList',    columns.targetOrg,    2000);
   await fillList('regionList', columns.targetRegion, 500);
+
+  // Multi-select dropdowns for the top filters
+  multiSelects.site = new MultiSelect('ms_filterSite', { placeholder: 'All sites', onChange: debounceRender });
+  multiSelects.page = new MultiSelect('ms_filterPage', { placeholder: 'All pages', onChange: debounceRender });
+  multiSelects.link = new MultiSelect('ms_filterLink', { placeholder: 'All link labels', onChange: debounceRender });
+
+  const [siteVals, pageVals, linkVals] = await Promise.all([
+    loadDistinctValues(columns.site,      2000),
+    loadDistinctValues(columns.pageName,  10000),
+    loadDistinctValues(columns.linkLabel, 10000),
+  ]);
+  multiSelects.site.setOptions(siteVals);
+  multiSelects.page.setOptions(pageVals);
+  multiSelects.link.setOptions(linkVals);
 }
 
 // =====================================================================
@@ -610,12 +869,14 @@ function getDateWhere() {
 function getFilterClauses() {
   const v = id => document.getElementById(id).value.trim();
   const eqClause = (col, val) => col && val ? ` AND ${col} = '${escSql(val)}'` : '';
-  const containsClause = (col, val) => col && val ? ` AND ${col} ILIKE '%${escSql(val)}%'` : '';
+  const inClause = (col, vals) => col && vals && vals.length
+    ? ` AND ${col} IN (${vals.map(x => `'${escSql(x)}'`).join(',')})`
+    : '';
 
   let w = '';
-  w += eqClause(columns.site, v('filterSite'));
-  w += containsClause(columns.pageName, v('filterPage'));
-  w += containsClause(columns.linkLabel, v('filterLink'));
+  w += inClause(columns.site,      multiSelects.site ? multiSelects.site.getValues() : []);
+  w += inClause(columns.pageName,  multiSelects.page ? multiSelects.page.getValues() : []);
+  w += inClause(columns.linkLabel, multiSelects.link ? multiSelects.link.getValues() : []);
   w += eqClause(columns.topic, v('filterTopic'));
   w += eqClause(columns.theme, v('filterTheme'));
   w += eqClause(columns.targetOrg, v('filterOrg'));
@@ -896,8 +1157,9 @@ window.toggleAdvanced = function() {
 };
 
 window.resetFilters = function() {
-  ['filterSite','filterPage','filterLink','filterTopic','filterTheme','filterOrg','filterRegion']
+  ['filterTopic','filterTheme','filterOrg','filterRegion']
     .forEach(id => document.getElementById(id).value = '');
+  Object.values(multiSelects).forEach(ms => ms.clear());
   applyPreset('all');
 };
 
