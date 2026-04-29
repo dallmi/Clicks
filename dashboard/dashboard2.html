@@ -452,6 +452,203 @@ tfoot td {
   font-size: 0.78rem;
 }
 
+/* ---- Tab Bar ---- */
+.tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--light-gray);
+  margin-bottom: 1rem;
+  background: var(--white);
+}
+.tab-btn {
+  padding: 0.65rem 1.1rem;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  color: var(--medium-gray);
+  font-size: 0.82rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tab-btn:hover { color: var(--dark-gray); background: var(--surface); }
+.tab-btn.active { color: var(--black); border-bottom-color: var(--primary); font-weight: 600; }
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
+
+/* ---- Audience Tab ---- */
+.aud-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.aud-kpi {
+  background: var(--white);
+  border: 1px solid var(--light-gray);
+  border-radius: 2px;
+  padding: 0.7rem 0.9rem;
+  border-left: 3px solid var(--primary);
+  min-width: 0;
+}
+.aud-kpi.region { border-left-color: var(--info); }
+.aud-kpi-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--medium-gray);
+  font-weight: 600;
+}
+.aud-kpi-name {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--black);
+  line-height: 1.2;
+  margin-top: 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.aud-kpi-value {
+  font-size: 0.7rem;
+  color: var(--medium-gray);
+  margin-top: 0.2rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-toggle {
+  display: inline-flex;
+  border: 1px solid var(--light-gray);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.metric-toggle button {
+  padding: 0.3rem 0.7rem;
+  background: var(--white);
+  border: none;
+  border-right: 1px solid var(--light-gray);
+  font-size: 0.72rem;
+  font-family: inherit;
+  color: var(--medium-gray);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.metric-toggle button:last-child { border-right: none; }
+.metric-toggle button:hover { background: var(--surface); color: var(--dark-gray); }
+.metric-toggle button.active { background: var(--primary); color: var(--white); }
+
+.audience-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+@media (max-width: 1200px) {
+  .audience-grid { grid-template-columns: 1fr; }
+  .aud-kpi-strip { grid-template-columns: repeat(2, 1fr); }
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.72rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--surface);
+  flex-wrap: wrap;
+}
+.breadcrumb-item {
+  color: var(--info);
+  cursor: pointer;
+  text-decoration: none;
+}
+.breadcrumb-item:hover { text-decoration: underline; }
+.breadcrumb-sep { color: var(--medium-gray); }
+.breadcrumb-current { color: var(--dark-gray); font-weight: 600; }
+
+.bar-list {
+  padding: 0.5rem 0.85rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 460px;
+  overflow-y: auto;
+}
+.bar-row {
+  display: grid;
+  grid-template-columns: 220px 1fr 90px;
+  gap: 0.6rem;
+  align-items: center;
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 0.2rem 0.3rem;
+  border-radius: 2px;
+  transition: background 0.1s;
+}
+.bar-row.no-drill { cursor: default; }
+.bar-row:hover:not(.no-drill) { background: var(--bg); }
+.bar-row-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--dark-gray);
+}
+.bar-row-track {
+  background: var(--surface);
+  height: 18px;
+  border-radius: 2px;
+  position: relative;
+  overflow: hidden;
+}
+.bar-row-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.2s;
+}
+.bar-row-count {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--dark-gray);
+  font-weight: 500;
+}
+
+/* ---- Heatmap ---- */
+.heatmap-wrap { padding: 0.5rem 0.85rem 0.85rem; overflow-x: auto; }
+table.heatmap {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+}
+table.heatmap th, table.heatmap td {
+  padding: 0.4rem 0.55rem;
+  text-align: center;
+  border: 1px solid var(--white);
+  cursor: default;
+}
+table.heatmap th {
+  background: var(--surface);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.66rem;
+  color: var(--dark-gray);
+  border-bottom: 1px solid var(--light-gray);
+}
+table.heatmap td.row-header {
+  background: var(--surface);
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--dark-gray);
+}
+table.heatmap td.cell { font-variant-numeric: tabular-nums; font-weight: 500; }
+
 /* ---- Responsive ---- */
 @media (max-width: 1100px) {
   .kpi-strip { grid-template-columns: repeat(3, 1fr); }
@@ -461,6 +658,7 @@ tfoot td {
   .advanced-row { grid-template-columns: 1fr 1fr; }
   .kpi-strip { grid-template-columns: repeat(2, 1fr); }
   .kpi-value { font-size: 1.2rem; }
+  .bar-row { grid-template-columns: 140px 1fr 70px; }
 }
 </style>
 </head>
@@ -543,28 +741,109 @@ tfoot td {
 
   <div id="dashboardContent" style="display:none">
 
-    <div class="kpi-strip" id="kpiStrip"></div>
-
-    <div class="section">
-      <div class="section-head">
-        <div class="section-title">Pages</div>
-        <div class="section-actions">
-          <span class="section-meta" id="pagesMeta"></span>
-          <button class="btn" onclick="exportTable('pages')">Export XLSX</button>
-        </div>
-      </div>
-      <div class="table-wrap" id="pagesTable"></div>
+    <div class="tab-bar" role="tablist">
+      <button class="tab-btn active" data-tab="tabPagesLinks" onclick="switchTab('tabPagesLinks')">Pages &amp; Links</button>
+      <button class="tab-btn" data-tab="tabAudience" onclick="switchTab('tabAudience')">Audience</button>
     </div>
 
-    <div class="section">
-      <div class="section-head">
-        <div class="section-title">Clicks on links and download documents</div>
-        <div class="section-actions">
-          <span class="section-meta" id="linksMeta"></span>
-          <button class="btn" onclick="exportTable('links')">Export XLSX</button>
+    <!-- TAB 1 — Pages & Links -->
+    <div class="tab-pane active" id="tabPagesLinks">
+      <div class="kpi-strip" id="kpiStrip"></div>
+
+      <div class="section">
+        <div class="section-head">
+          <div class="section-title">Pages</div>
+          <div class="section-actions">
+            <span class="section-meta" id="pagesMeta"></span>
+            <button class="btn" onclick="exportTable('pages')">Export XLSX</button>
+          </div>
+        </div>
+        <div class="table-wrap" id="pagesTable"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <div class="section-title">Clicks on links and download documents</div>
+          <div class="section-actions">
+            <span class="section-meta" id="linksMeta"></span>
+            <button class="btn" onclick="exportTable('links')">Export XLSX</button>
+          </div>
+        </div>
+        <div class="table-wrap" id="linksTable"></div>
+      </div>
+    </div>
+
+    <!-- TAB 2 — Audience (Who & Where) -->
+    <div class="tab-pane" id="tabAudience">
+      <div class="aud-kpi-strip" id="audKpiStrip"></div>
+
+      <div class="section">
+        <div class="section-head">
+          <div class="section-title">Metric</div>
+          <div class="section-actions">
+            <div class="metric-toggle" id="audMetricToggle">
+              <button class="active" data-metric="clicks" onclick="setAudMetric('clicks')">Clicks</button>
+              <button data-metric="downloads" onclick="setAudMetric('downloads')">Downloads</button>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="table-wrap" id="linksTable"></div>
+
+      <div class="audience-grid">
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title">Business Division — drill-down</div>
+            <div class="section-actions">
+              <span class="section-meta" id="divDrillMeta"></span>
+            </div>
+          </div>
+          <div class="breadcrumb" id="divDrillBreadcrumb"></div>
+          <div class="bar-list" id="divDrillBars"></div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title">Region → Country</div>
+            <div class="section-actions">
+              <span class="section-meta" id="regionDrillMeta"></span>
+            </div>
+          </div>
+          <div class="breadcrumb" id="regionDrillBreadcrumb"></div>
+          <div class="bar-list" id="regionDrillBars"></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <div class="section-title">Region × Division</div>
+          <div class="section-actions">
+            <span class="section-meta">Top 5 Divisions × all Regions</span>
+          </div>
+        </div>
+        <div class="heatmap-wrap" id="regDivHeatmap"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <div class="section-title">Top Downloads — by Division &amp; Region</div>
+          <div class="section-actions">
+            <span class="section-meta" id="topDownloadsMeta"></span>
+            <button class="btn" onclick="exportTable('audDownloads')">Export XLSX</button>
+          </div>
+        </div>
+        <div class="table-wrap" id="topDownloadsByDivTable"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <div class="section-title">Top Pages — by Division &amp; Region</div>
+          <div class="section-actions">
+            <span class="section-meta" id="topPagesAudMeta"></span>
+            <button class="btn" onclick="exportTable('audPages')">Export XLSX</button>
+          </div>
+        </div>
+        <div class="table-wrap" id="topPagesByDivTable"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -579,11 +858,78 @@ let dateFilter = { from: null, to: null };
 let activePreset = 'all';
 let sortState = {
   pages: { col: 'total_clicks', dir: 'desc' },
-  links: { col: 'total_clicks', dir: 'desc' }
+  links: { col: 'total_clicks', dir: 'desc' },
+  audDownloads: { col: 'downloads', dir: 'desc' },
+  audPages:     { col: 'clicks',    dir: 'desc' }
 };
-let lastResults = { pages: null, links: null };
+let lastResults = { pages: null, links: null, audDownloads: null, audPages: null };
 
 const TABLE_LIMIT = 100;
+
+// ---- Audience tab state ----
+let activeTab = 'tabPagesLinks';
+let audMetric = 'clicks'; // 'clicks' | 'downloads'
+let audienceDirty = true;
+const DIV_LEVELS  = ['hrDivision','hrUnit','hrArea','hrSector'];
+const DIV_LABELS  = ['Division','Unit','Area','Sector'];
+let divDrill      = { level: 0, filters: [] }; // [{level, value}]
+const REG_LEVELS  = ['hrRegion','hrCountry'];
+const REG_LABELS  = ['Region','Country'];
+let regDrill      = { level: 0, filter: null };
+
+// ---- HR canonical color palettes (from HR / SearchAnalytics dashboards) ----
+const DIVISION_COLOR_MAP = {
+  'Investment Bank':              '#404040',
+  'Global Wealth Management':     '#B8B3A2',
+  'Asset Management':             '#5A5D5C',
+  'Group Functions':              '#CCCABC',
+  'Personal & Corporate Banking': '#7A7870',
+};
+const DIVISION_GRAYS_FALLBACK = ['#8E8D83', '#404040', '#B8B3A2', '#5A5D5C', '#CCCABC', '#7A7870'];
+const REGION_COLORS = {
+  'SWITZERLAND': '#404040',
+  'EMEA':        '#B8B3A2',
+  'AMERICAS':    '#5A5D5C',
+  'APAC':        '#7A7870',
+  'Unknown':     '#CCCABC',
+};
+const COUNTRY_PALETTE = ['#879420','#9F8865','#469A6C','#AD3E4A','#8489BD','#0C7EC6','#654D16','#804C95','#45999C','#4972AC'];
+const HEATMAP_STOPS = ['#FFFFFF','#F5F0E1','#E4A911','#E60000','#8A000A'];
+
+let _divFallbackIdx = 0;
+const _divColorCache = {};
+function getDivisionColor(name) {
+  if (!name) return '#CCCABC';
+  if (DIVISION_COLOR_MAP[name]) return DIVISION_COLOR_MAP[name];
+  if (_divColorCache[name]) return _divColorCache[name];
+  const c = DIVISION_GRAYS_FALLBACK[_divFallbackIdx % DIVISION_GRAYS_FALLBACK.length];
+  _divFallbackIdx++;
+  _divColorCache[name] = c;
+  return c;
+}
+function getRegionColor(name) {
+  return REGION_COLORS[name] || '#CCCABC';
+}
+function heatColor(val, max) {
+  if (!max || val == null) return '#FFFFFF';
+  const t = Math.min(1, val / max);
+  const stops = HEATMAP_STOPS;
+  const pos = t * (stops.length - 1);
+  const i = Math.floor(pos);
+  const f = pos - i;
+  if (i >= stops.length - 1) return stops[stops.length - 1];
+  const a = stops[i], b = stops[i + 1];
+  const ar = parseInt(a.slice(1,3),16), ag = parseInt(a.slice(3,5),16), ab = parseInt(a.slice(5,7),16);
+  const br = parseInt(b.slice(1,3),16), bg = parseInt(b.slice(3,5),16), bb = parseInt(b.slice(5,7),16);
+  const r = Math.round(ar + (br - ar) * f);
+  const g = Math.round(ag + (bg - ag) * f);
+  const c = Math.round(ab + (bb - ab) * f);
+  return `rgb(${r},${g},${c})`;
+}
+function heatTextColor(val, max) {
+  if (!max) return 'var(--dark-gray)';
+  return (val / max) > 0.6 ? '#FFFFFF' : 'var(--dark-gray)';
+}
 
 // =====================================================================
 // Helpers
@@ -863,6 +1209,12 @@ async function resolveColumns() {
     targetRegion:pick('CP_TargetRegion'),
     gpn:         pick('gpn', 'CP_GPN', 'CP_gpn'),
     sessionDate: pick('session_date'),
+    hrDivision:  pick('hr_division', 'gcrs_division_desc'),
+    hrUnit:      pick('hr_unit',     'gcrs_unit_desc'),
+    hrArea:      pick('hr_area',     'gcrs_area_desc'),
+    hrSector:    pick('hr_sector',   'gcrs_sector_desc'),
+    hrRegion:    pick('hr_region'),
+    hrCountry:   pick('hr_country'),
   };
 
   if (!columns.linkAddress || !columns.gpn || !columns.sessionDate) {
@@ -955,16 +1307,54 @@ function whereClause() {
 // =====================================================================
 // Render
 // =====================================================================
+let pagesLinksDirty = true;
+
 async function renderAll() {
   setStatus('loading', 'Querying…');
   try {
-    await Promise.all([renderKPIs(), renderPagesTable(), renderLinksTable()]);
+    if (activeTab === 'tabPagesLinks') {
+      await Promise.all([renderKPIs(), renderPagesTable(), renderLinksTable()]);
+      pagesLinksDirty = false;
+      audienceDirty = true;
+    } else if (activeTab === 'tabAudience') {
+      await renderAudience();
+      audienceDirty = false;
+      pagesLinksDirty = true;
+    }
     setStatus('ready', getRefreshLabel());
   } catch (err) {
     console.error(err);
     setStatus('error', err.message);
   }
 }
+
+window.switchTab = function(tabId) {
+  if (activeTab === tabId) return;
+  activeTab = tabId;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === tabId));
+  if (tabId === 'tabAudience' && audienceDirty) {
+    setStatus('loading', 'Querying…');
+    renderAudience()
+      .then(() => { audienceDirty = false; setStatus('ready', getRefreshLabel()); })
+      .catch(err => { console.error(err); setStatus('error', err.message); });
+  } else if (tabId === 'tabPagesLinks' && pagesLinksDirty) {
+    setStatus('loading', 'Querying…');
+    Promise.all([renderKPIs(), renderPagesTable(), renderLinksTable()])
+      .then(() => { pagesLinksDirty = false; setStatus('ready', getRefreshLabel()); })
+      .catch(err => { console.error(err); setStatus('error', err.message); });
+  }
+};
+
+window.setAudMetric = function(m) {
+  if (m === audMetric) return;
+  audMetric = m;
+  document.querySelectorAll('#audMetricToggle button').forEach(b => b.classList.toggle('active', b.dataset.metric === m));
+  // Re-render the metric-driven blocks (KPI strip stays the same — shows both)
+  renderDivDrill();
+  renderRegionDrill();
+  renderRegDivHeatmap();
+};
 
 async function renderKPIs() {
   const w = whereClause();
@@ -1168,9 +1558,502 @@ function escapeAttr(s) { return escapeHtml(s); }
 window.sortBy = function(table, col) {
   const s = sortState[table];
   if (s.col === col) s.dir = s.dir === 'asc' ? 'desc' : 'asc';
-  else { s.col = col; s.dir = ['page_name','page_url','url','link_title','destination'].includes(col) ? 'asc' : 'desc'; }
-  if (table === 'pages') renderPagesTable(); else renderLinksTable();
+  else {
+    s.col = col;
+    s.dir = ['page_name','page_url','url','link_title','destination','file_name','file_type','top_division','top_region'].includes(col) ? 'asc' : 'desc';
+  }
+  if (table === 'pages')             renderPagesTable();
+  else if (table === 'links')        renderLinksTable();
+  else if (table === 'audDownloads') renderTopDownloadsByDivision();
+  else if (table === 'audPages')     renderTopPagesByDivision();
 };
+
+// =====================================================================
+// Audience tab — renderers
+// =====================================================================
+function dlExpr() {
+  return columns.fileType
+    ? `COUNT(*) FILTER (WHERE ${columns.fileType} IS NOT NULL AND ${columns.fileType} <> '')`
+    : columns.fileName
+      ? `COUNT(*) FILTER (WHERE ${columns.fileName} IS NOT NULL AND ${columns.fileName} <> '')`
+      : `0`;
+}
+function dlPredicate() {
+  return columns.fileType
+    ? `(${columns.fileType} IS NOT NULL AND ${columns.fileType} <> '')`
+    : columns.fileName
+      ? `(${columns.fileName} IS NOT NULL AND ${columns.fileName} <> '')`
+      : `FALSE`;
+}
+
+function audMetricExpr() {
+  return audMetric === 'downloads' ? dlExpr() : `COUNT(*)`;
+}
+
+function audMissingMessage(field) {
+  return `<div class="empty-state">Column <code>${field}</code> not available in events_raw.parquet.</div>`;
+}
+
+async function renderAudience() {
+  await Promise.all([
+    renderAudKPIs(),
+    renderDivDrill(),
+    renderRegionDrill(),
+    renderRegDivHeatmap(),
+    renderTopDownloadsByDivision(),
+    renderTopPagesByDivision(),
+  ]);
+}
+
+async function renderAudKPIs() {
+  const strip = document.getElementById('audKpiStrip');
+  if (!columns.hrDivision && !columns.hrRegion) {
+    strip.innerHTML = `<div class="aud-kpi" style="grid-column:1/-1">${audMissingMessage('hr_division / hr_region')}</div>`;
+    return;
+  }
+  const w = whereClause();
+  const dl = dlExpr();
+
+  // 4 separate small queries — fast on parquet, simpler than UNION
+  const queries = [];
+  if (columns.hrDivision) {
+    queries.push(['div_clicks', `SELECT COALESCE(${columns.hrDivision},'(unknown)') AS name, COUNT(*) AS v FROM events ${w} AND ${columns.hrDivision} IS NOT NULL GROUP BY 1 ORDER BY v DESC LIMIT 1`]);
+    queries.push(['div_dl',     `SELECT COALESCE(${columns.hrDivision},'(unknown)') AS name, ${dl} AS v FROM events ${w} AND ${columns.hrDivision} IS NOT NULL GROUP BY 1 HAVING v > 0 ORDER BY v DESC LIMIT 1`]);
+  }
+  if (columns.hrRegion) {
+    queries.push(['reg_clicks', `SELECT COALESCE(${columns.hrRegion},'(unknown)') AS name, COUNT(*) AS v FROM events ${w} AND ${columns.hrRegion} IS NOT NULL GROUP BY 1 ORDER BY v DESC LIMIT 1`]);
+    queries.push(['reg_dl',     `SELECT COALESCE(${columns.hrRegion},'(unknown)') AS name, ${dl} AS v FROM events ${w} AND ${columns.hrRegion} IS NOT NULL GROUP BY 1 HAVING v > 0 ORDER BY v DESC LIMIT 1`]);
+  }
+  const results = {};
+  await Promise.all(queries.map(([k, sql]) => q(sql).then(r => results[k] = r[0] || null)));
+
+  const cardDiv = (label, row, accent) => {
+    const cls = 'aud-kpi' + (accent ? ' ' + accent : '');
+    if (!row) return `<div class="${cls}"><div class="aud-kpi-label">${label}</div><div class="aud-kpi-name" style="color:var(--medium-gray)">—</div><div class="aud-kpi-value">no data</div></div>`;
+    const sw = `<span style="display:inline-block;width:10px;height:10px;background:${getDivisionColor(row.name)};border-radius:2px;margin-right:0.4rem;vertical-align:middle"></span>`;
+    return `<div class="${cls}"><div class="aud-kpi-label">${label}</div><div class="aud-kpi-name" title="${escapeHtml(row.name)}">${sw}${escapeHtml(row.name)}</div><div class="aud-kpi-value">${fmt(row.v)}</div></div>`;
+  };
+  const cardReg = (label, row) => {
+    if (!row) return `<div class="aud-kpi region"><div class="aud-kpi-label">${label}</div><div class="aud-kpi-name" style="color:var(--medium-gray)">—</div><div class="aud-kpi-value">no data</div></div>`;
+    const sw = `<span style="display:inline-block;width:10px;height:10px;background:${getRegionColor(row.name)};border-radius:2px;margin-right:0.4rem;vertical-align:middle"></span>`;
+    return `<div class="aud-kpi region"><div class="aud-kpi-label">${label}</div><div class="aud-kpi-name" title="${escapeHtml(row.name)}">${sw}${escapeHtml(row.name)}</div><div class="aud-kpi-value">${fmt(row.v)}</div></div>`;
+  };
+
+  const cards = [];
+  if (columns.hrDivision) {
+    cards.push(cardDiv('Top Division — Clicks',    results.div_clicks));
+    cards.push(cardDiv('Top Division — Downloads', results.div_dl));
+  }
+  if (columns.hrRegion) {
+    cards.push(cardReg('Top Region — Clicks',    results.reg_clicks));
+    cards.push(cardReg('Top Region — Downloads', results.reg_dl));
+  }
+  strip.innerHTML = cards.join('');
+}
+
+function buildDrillBreadcrumb(elId, level, labels, filters, navigateFn) {
+  const el = document.getElementById(elId);
+  const parts = [`<span class="breadcrumb-item" onclick="${navigateFn}(-1)">All ${labels[0]}s</span>`];
+  for (let i = 0; i < filters.length; i++) {
+    parts.push(`<span class="breadcrumb-sep">›</span>`);
+    if (i < filters.length - 1) {
+      parts.push(`<span class="breadcrumb-item" onclick="${navigateFn}(${i})">${escapeHtml(filters[i].value)}</span>`);
+    } else {
+      parts.push(`<span class="breadcrumb-current">${escapeHtml(filters[i].value)} — ${labels[level]}</span>`);
+    }
+  }
+  if (filters.length === 0) parts[0] = `<span class="breadcrumb-current">All ${labels[0]}s</span>`;
+  el.innerHTML = parts.join(' ');
+}
+
+function renderBars(targetId, rows, getColor, drillable, drillFn) {
+  const el = document.getElementById(targetId);
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:1.5rem">No data.</div>';
+    return;
+  }
+  const max = Math.max(...rows.map(r => Number(r.v) || 0)) || 1;
+  el.innerHTML = rows.map(r => {
+    const v = Number(r.v) || 0;
+    const pct = (v / max) * 100;
+    const color = getColor(r.name);
+    const cls = drillable ? 'bar-row' : 'bar-row no-drill';
+    const onclick = drillable ? `onclick="${drillFn}('${String(r.name).replace(/'/g,"\\'").replace(/"/g,'&quot;')}')"` : '';
+    return `<div class="${cls}" ${onclick} title="${escapeHtml(r.name)}">
+      <div class="bar-row-label">${escapeHtml(r.name)}</div>
+      <div class="bar-row-track"><div class="bar-row-fill" style="width:${pct.toFixed(1)}%;background:${color}"></div></div>
+      <div class="bar-row-count">${fmt(v)}</div>
+    </div>`;
+  }).join('');
+}
+
+async function renderDivDrill() {
+  if (!columns.hrDivision) {
+    document.getElementById('divDrillBars').innerHTML = audMissingMessage('hr_division');
+    document.getElementById('divDrillBreadcrumb').innerHTML = '';
+    return;
+  }
+  const level = divDrill.level;
+  const colKey = DIV_LEVELS[level];
+  const col = columns[colKey];
+  if (!col) {
+    document.getElementById('divDrillBars').innerHTML = audMissingMessage(`${DIV_LABELS[level]} (${colKey})`);
+    return;
+  }
+
+  let drillWhere = '';
+  for (const f of divDrill.filters) {
+    drillWhere += ` AND ${columns[DIV_LEVELS[f.level]]} = '${escSql(f.value)}'`;
+  }
+
+  const w = whereClause();
+  const metric = audMetricExpr();
+  const havingV = audMetric === 'downloads' ? ' HAVING v > 0' : '';
+  const rows = await q(`
+    SELECT COALESCE(${col}, '(unknown)') AS name, ${metric} AS v
+    FROM events ${w} AND ${col} IS NOT NULL${drillWhere}
+    GROUP BY 1${havingV}
+    ORDER BY v DESC
+    LIMIT 25
+  `);
+
+  buildDrillBreadcrumb('divDrillBreadcrumb', level, DIV_LABELS, divDrill.filters, 'divNavigateTo');
+  document.getElementById('divDrillMeta').textContent = `${DIV_LABELS[level]} • ${rows.length}`;
+
+  const drillable = level < DIV_LEVELS.length - 1;
+  const colorFn = level === 0 ? getDivisionColor : (() => DIVISION_COLOR_MAP[divDrill.filters[0]?.value] || getDivisionColor(divDrill.filters[0]?.value || ''));
+  renderBars('divDrillBars', rows, colorFn, drillable, 'divDrillInto');
+}
+
+window.divDrillInto = function(name) {
+  if (divDrill.level >= DIV_LEVELS.length - 1) return;
+  if (name === '(unknown)') return;
+  divDrill.filters.push({ level: divDrill.level, value: name });
+  divDrill.level++;
+  renderDivDrill();
+};
+window.divNavigateTo = function(idx) {
+  if (idx < 0) {
+    divDrill.level = 0;
+    divDrill.filters = [];
+  } else {
+    divDrill.filters = divDrill.filters.slice(0, idx + 1);
+    divDrill.level = idx + 1;
+  }
+  renderDivDrill();
+};
+
+async function renderRegionDrill() {
+  if (!columns.hrRegion) {
+    document.getElementById('regionDrillBars').innerHTML = audMissingMessage('hr_region');
+    document.getElementById('regionDrillBreadcrumb').innerHTML = '';
+    return;
+  }
+  const level = regDrill.level;
+  const colKey = REG_LEVELS[level];
+  const col = columns[colKey];
+  if (!col) {
+    document.getElementById('regionDrillBars').innerHTML = audMissingMessage(`${REG_LABELS[level]} (${colKey})`);
+    return;
+  }
+
+  let drillWhere = '';
+  if (regDrill.filter) drillWhere = ` AND ${columns.hrRegion} = '${escSql(regDrill.filter)}'`;
+
+  const w = whereClause();
+  const metric = audMetricExpr();
+  const havingV = audMetric === 'downloads' ? ' HAVING v > 0' : '';
+  const rows = await q(`
+    SELECT COALESCE(${col}, '(unknown)') AS name, ${metric} AS v
+    FROM events ${w} AND ${col} IS NOT NULL${drillWhere}
+    GROUP BY 1${havingV}
+    ORDER BY v DESC
+    LIMIT 25
+  `);
+
+  // Breadcrumb (single-level drill, region → country only)
+  const bc = document.getElementById('regionDrillBreadcrumb');
+  if (level === 0) {
+    bc.innerHTML = `<span class="breadcrumb-current">All Regions</span>`;
+  } else {
+    bc.innerHTML = `<span class="breadcrumb-item" onclick="regionNavigateTo(-1)">All Regions</span><span class="breadcrumb-sep">›</span><span class="breadcrumb-current">${escapeHtml(regDrill.filter)} — Country</span>`;
+  }
+  document.getElementById('regionDrillMeta').textContent = `${REG_LABELS[level]} • ${rows.length}`;
+
+  const drillable = level === 0;
+  const colorFn = level === 0
+    ? getRegionColor
+    : ((_, i) => COUNTRY_PALETTE[i % COUNTRY_PALETTE.length]);
+  // Need index-aware color for country level — small adapter:
+  if (level === 0) {
+    renderBars('regionDrillBars', rows, getRegionColor, true, 'regionDrillInto');
+  } else {
+    const el = document.getElementById('regionDrillBars');
+    if (!rows.length) { el.innerHTML = '<div class="empty-state" style="padding:1.5rem">No data.</div>'; return; }
+    const max = Math.max(...rows.map(r => Number(r.v) || 0)) || 1;
+    el.innerHTML = rows.map((r, i) => {
+      const v = Number(r.v) || 0;
+      const pct = (v / max) * 100;
+      const color = COUNTRY_PALETTE[i % COUNTRY_PALETTE.length];
+      return `<div class="bar-row no-drill" title="${escapeHtml(r.name)}">
+        <div class="bar-row-label">${escapeHtml(r.name)}</div>
+        <div class="bar-row-track"><div class="bar-row-fill" style="width:${pct.toFixed(1)}%;background:${color}"></div></div>
+        <div class="bar-row-count">${fmt(v)}</div>
+      </div>`;
+    }).join('');
+  }
+}
+
+window.regionDrillInto = function(name) {
+  if (name === '(unknown)') return;
+  regDrill.filter = name;
+  regDrill.level  = 1;
+  renderRegionDrill();
+};
+window.regionNavigateTo = function(_) {
+  regDrill.filter = null;
+  regDrill.level  = 0;
+  renderRegionDrill();
+};
+
+async function renderRegDivHeatmap() {
+  const wrap = document.getElementById('regDivHeatmap');
+  if (!columns.hrDivision || !columns.hrRegion) {
+    wrap.innerHTML = audMissingMessage('hr_division / hr_region');
+    return;
+  }
+  const w = whereClause();
+  const metric = audMetricExpr();
+
+  // Top 5 divisions by metric overall
+  const havingV = audMetric === 'downloads' ? ' HAVING v > 0' : '';
+  const topDivs = await q(`
+    SELECT COALESCE(${columns.hrDivision},'(unknown)') AS name, ${metric} AS v
+    FROM events ${w} AND ${columns.hrDivision} IS NOT NULL
+    GROUP BY 1${havingV}
+    ORDER BY v DESC LIMIT 5
+  `);
+  const divNames = topDivs.map(d => d.name);
+  if (!divNames.length) { wrap.innerHTML = '<div class="empty-state" style="padding:1.5rem">No data.</div>'; return; }
+
+  const divIn = divNames.map(d => `'${escSql(d)}'`).join(',');
+  const cells = await q(`
+    SELECT
+      COALESCE(${columns.hrRegion},'(unknown)') AS region,
+      COALESCE(${columns.hrDivision},'(unknown)') AS division,
+      ${metric} AS v
+    FROM events ${w}
+      AND ${columns.hrRegion} IS NOT NULL
+      AND ${columns.hrDivision} IN (${divIn})
+    GROUP BY 1, 2
+  `);
+
+  // pivot to {region: {division: v}}
+  const pivot = {};
+  const regionTotals = {};
+  let max = 0;
+  cells.forEach(c => {
+    pivot[c.region] = pivot[c.region] || {};
+    pivot[c.region][c.division] = Number(c.v) || 0;
+    regionTotals[c.region] = (regionTotals[c.region] || 0) + (Number(c.v) || 0);
+    if (Number(c.v) > max) max = Number(c.v);
+  });
+  const regions = Object.keys(pivot).sort((a, b) => regionTotals[b] - regionTotals[a]);
+
+  const headerRow = `<tr><th>Region</th>${divNames.map(d => `<th title="${escapeHtml(d)}">${escapeHtml(d)}</th>`).join('')}<th>Total</th></tr>`;
+  const bodyRows = regions.map(r => {
+    const cells = divNames.map(d => {
+      const v = pivot[r]?.[d] || 0;
+      return `<td class="cell" style="background:${heatColor(v, max)};color:${heatTextColor(v, max)}">${v ? fmt(v) : ''}</td>`;
+    }).join('');
+    return `<tr><td class="row-header" title="${escapeHtml(r)}">${escapeHtml(r)}</td>${cells}<td class="cell" style="background:var(--surface);font-weight:600">${fmt(regionTotals[r])}</td></tr>`;
+  }).join('');
+
+  wrap.innerHTML = `<table class="heatmap"><thead>${headerRow}</thead><tbody>${bodyRows}</tbody></table>`;
+}
+
+async function renderTopDownloadsByDivision() {
+  const target = document.getElementById('topDownloadsByDivTable');
+  if (!columns.fileName && !columns.fileType) {
+    target.innerHTML = audMissingMessage('CP_FileName_Label / CP_FileType_Label');
+    return;
+  }
+  if (!columns.hrDivision && !columns.hrRegion) {
+    target.innerHTML = audMissingMessage('hr_division / hr_region');
+    return;
+  }
+  const w = whereClause();
+  const dlPred = dlPredicate();
+  const fileNameCol = columns.fileName || `'(unknown)'`;
+  const fileTypeCol = columns.fileType || `''`;
+  const divCol      = columns.hrDivision || `NULL`;
+  const regCol      = columns.hrRegion   || `NULL`;
+  const sort = sortState.audDownloads;
+
+  const rows = await q(`
+    WITH per_combo AS (
+      SELECT
+        COALESCE(${columns.fileName || `'(unknown)'`}, '(unknown)') AS file_name,
+        COALESCE(${columns.fileType || `''`}, '') AS file_type,
+        ${divCol} AS division,
+        ${regCol} AS region,
+        COUNT(*) AS c
+      FROM events ${w} AND ${dlPred}
+      GROUP BY 1, 2, 3, 4
+    ),
+    file_totals AS (
+      SELECT file_name, file_type, SUM(c)::BIGINT AS downloads, COUNT(DISTINCT division) AS n_divs, COUNT(DISTINCT region) AS n_regs
+      FROM per_combo GROUP BY 1, 2
+    ),
+    top_div AS (
+      SELECT file_name, file_type, division, SUM(c)::BIGINT AS dc,
+             ROW_NUMBER() OVER (PARTITION BY file_name, file_type ORDER BY SUM(c) DESC) AS rn
+      FROM per_combo WHERE division IS NOT NULL GROUP BY 1, 2, 3
+    ),
+    top_reg AS (
+      SELECT file_name, file_type, region, SUM(c)::BIGINT AS rc,
+             ROW_NUMBER() OVER (PARTITION BY file_name, file_type ORDER BY SUM(c) DESC) AS rn
+      FROM per_combo WHERE region IS NOT NULL GROUP BY 1, 2, 3
+    )
+    SELECT
+      ft.file_name,
+      ft.file_type,
+      ft.downloads,
+      td.division AS top_division,
+      td.dc       AS top_division_dl,
+      tr.region   AS top_region,
+      tr.rc       AS top_region_dl
+    FROM file_totals ft
+    LEFT JOIN top_div td ON ft.file_name = td.file_name AND ft.file_type = td.file_type AND td.rn = 1
+    LEFT JOIN top_reg tr ON ft.file_name = tr.file_name AND ft.file_type = tr.file_type AND tr.rn = 1
+    ORDER BY ${sort.col} ${sort.dir.toUpperCase()} NULLS LAST
+    LIMIT ${TABLE_LIMIT}
+  `);
+
+  lastResults.audDownloads = { rows, totals: null };
+  document.getElementById('topDownloadsMeta').textContent = `Top ${rows.length}`;
+
+  target.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          ${th('audDownloads', 'file_name', 'File Name')}
+          ${th('audDownloads', 'file_type', 'File Type')}
+          ${th('audDownloads', 'downloads', 'Downloads', true)}
+          ${th('audDownloads', 'top_division', 'Top Division')}
+          ${th('audDownloads', 'top_division_dl', '↳ Downloads', true)}
+          ${th('audDownloads', 'top_region', 'Top Region')}
+          ${th('audDownloads', 'top_region_dl', '↳ Downloads', true)}
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(r => {
+          const dvSwatch = r.top_division ? `<span style="display:inline-block;width:8px;height:8px;background:${getDivisionColor(r.top_division)};border-radius:1px;margin-right:0.4rem;vertical-align:middle"></span>` : '';
+          const rgSwatch = r.top_region ? `<span style="display:inline-block;width:8px;height:8px;background:${getRegionColor(r.top_region)};border-radius:1px;margin-right:0.4rem;vertical-align:middle"></span>` : '';
+          return `<tr>
+            <td class="label" title="${escapeHtml(r.file_name)}">${escapeHtml(r.file_name)}</td>
+            <td>${escapeHtml(r.file_type)}</td>
+            <td class="num">${fmt(r.downloads)}</td>
+            <td>${dvSwatch}${escapeHtml(r.top_division || '—')}</td>
+            <td class="num">${r.top_division_dl != null ? fmt(r.top_division_dl) : '—'}</td>
+            <td>${rgSwatch}${escapeHtml(r.top_region || '—')}</td>
+            <td class="num">${r.top_region_dl != null ? fmt(r.top_region_dl) : '—'}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+
+async function renderTopPagesByDivision() {
+  const target = document.getElementById('topPagesByDivTable');
+  if (!columns.pageName && !columns.pageUrl) {
+    target.innerHTML = audMissingMessage('CP_PageName / CP_PageURL');
+    return;
+  }
+  if (!columns.hrDivision && !columns.hrRegion) {
+    target.innerHTML = audMissingMessage('hr_division / hr_region');
+    return;
+  }
+  const w = whereClause();
+  const dl = dlExpr();
+  const pageCol = columns.pageName || columns.pageUrl;
+  const divCol  = columns.hrDivision || `NULL`;
+  const regCol  = columns.hrRegion   || `NULL`;
+  const sort = sortState.audPages;
+
+  const rows = await q(`
+    WITH per_combo AS (
+      SELECT
+        COALESCE(${pageCol}, '(unknown)') AS page_name,
+        ${divCol} AS division,
+        ${regCol} AS region,
+        COUNT(*) AS c,
+        ${dl}    AS dl
+      FROM events ${w}
+      GROUP BY 1, 2, 3
+    ),
+    page_totals AS (
+      SELECT page_name, SUM(c)::BIGINT AS clicks, SUM(dl)::BIGINT AS downloads, COUNT(DISTINCT division) AS n_divs
+      FROM per_combo GROUP BY 1
+    ),
+    top_div AS (
+      SELECT page_name, division, SUM(c)::BIGINT AS dc,
+             ROW_NUMBER() OVER (PARTITION BY page_name ORDER BY SUM(c) DESC) AS rn
+      FROM per_combo WHERE division IS NOT NULL GROUP BY 1, 2
+    ),
+    top_reg AS (
+      SELECT page_name, region, SUM(c)::BIGINT AS rc,
+             ROW_NUMBER() OVER (PARTITION BY page_name ORDER BY SUM(c) DESC) AS rn
+      FROM per_combo WHERE region IS NOT NULL GROUP BY 1, 2
+    )
+    SELECT
+      pt.page_name,
+      pt.clicks,
+      pt.downloads,
+      td.division AS top_division,
+      td.dc       AS top_division_clicks,
+      tr.region   AS top_region,
+      tr.rc       AS top_region_clicks
+    FROM page_totals pt
+    LEFT JOIN top_div td ON pt.page_name = td.page_name AND td.rn = 1
+    LEFT JOIN top_reg tr ON pt.page_name = tr.page_name AND tr.rn = 1
+    ORDER BY ${sort.col} ${sort.dir.toUpperCase()} NULLS LAST
+    LIMIT ${TABLE_LIMIT}
+  `);
+
+  lastResults.audPages = { rows, totals: null };
+  document.getElementById('topPagesAudMeta').textContent = `Top ${rows.length}`;
+
+  target.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          ${th('audPages', 'page_name', 'Page Name')}
+          ${th('audPages', 'clicks', 'Clicks', true)}
+          ${th('audPages', 'downloads', 'Downloads', true)}
+          ${th('audPages', 'top_division', 'Top Division')}
+          ${th('audPages', 'top_division_clicks', '↳ Clicks', true)}
+          ${th('audPages', 'top_region', 'Top Region')}
+          ${th('audPages', 'top_region_clicks', '↳ Clicks', true)}
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(r => {
+          const dvSwatch = r.top_division ? `<span style="display:inline-block;width:8px;height:8px;background:${getDivisionColor(r.top_division)};border-radius:1px;margin-right:0.4rem;vertical-align:middle"></span>` : '';
+          const rgSwatch = r.top_region ? `<span style="display:inline-block;width:8px;height:8px;background:${getRegionColor(r.top_region)};border-radius:1px;margin-right:0.4rem;vertical-align:middle"></span>` : '';
+          return `<tr>
+            <td>${escapeHtml(r.page_name)}</td>
+            <td class="num">${fmt(r.clicks)}</td>
+            <td class="num">${fmt(r.downloads)}</td>
+            <td>${dvSwatch}${escapeHtml(r.top_division || '—')}</td>
+            <td class="num">${r.top_division_clicks != null ? fmt(r.top_division_clicks) : '—'}</td>
+            <td>${rgSwatch}${escapeHtml(r.top_region || '—')}</td>
+            <td class="num">${r.top_region_clicks != null ? fmt(r.top_region_clicks) : '—'}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
 
 // =====================================================================
 // Filter interactions
@@ -1252,23 +2135,42 @@ window.exportTable = async function(key) {
     return;
   }
 
-  const SPEC = key === 'pages'
-    ? {
-        sheet:   'Pages',
-        headers: ['Page Name', 'URL', 'Number of Links Clicked', 'Total Clicks', 'Unique Clicks', 'Total Downloads'],
-        cols:    ['page_name', 'url', 'num_links_clicked', 'total_clicks', 'unique_clicks', 'downloads'],
-        numIdx:  [2, 3, 4, 5],
-        linkIdx: [1],
-        totalsLabelSpan: 2,
-      }
-    : {
-        sheet:   'Links',
-        headers: ['Page URL', 'Page Name', 'Link Title', 'Destination Link', 'Total Clicks', 'Unique Clicks', 'Total Downloads'],
-        cols:    ['page_url', 'page_name', 'link_title', 'destination', 'total_clicks', 'unique_clicks', 'downloads'],
-        numIdx:  [4, 5, 6],
-        linkIdx: [0, 3],
-        totalsLabelSpan: 4,
-      };
+  const SPECS = {
+    pages: {
+      sheet:   'Pages',
+      headers: ['Page Name', 'URL', 'Number of Links Clicked', 'Total Clicks', 'Unique Clicks', 'Total Downloads'],
+      cols:    ['page_name', 'url', 'num_links_clicked', 'total_clicks', 'unique_clicks', 'downloads'],
+      numIdx:  [2, 3, 4, 5],
+      linkIdx: [1],
+      totalsLabelSpan: 2,
+    },
+    links: {
+      sheet:   'Links',
+      headers: ['Page URL', 'Page Name', 'Link Title', 'Destination Link', 'Total Clicks', 'Unique Clicks', 'Total Downloads'],
+      cols:    ['page_url', 'page_name', 'link_title', 'destination', 'total_clicks', 'unique_clicks', 'downloads'],
+      numIdx:  [4, 5, 6],
+      linkIdx: [0, 3],
+      totalsLabelSpan: 4,
+    },
+    audDownloads: {
+      sheet:   'Top Downloads by Division',
+      headers: ['File Name', 'File Type', 'Downloads', 'Top Division', 'Top Division Downloads', 'Top Region', 'Top Region Downloads'],
+      cols:    ['file_name', 'file_type', 'downloads', 'top_division', 'top_division_dl', 'top_region', 'top_region_dl'],
+      numIdx:  [2, 4, 6],
+      linkIdx: [],
+      totalsLabelSpan: 0,
+    },
+    audPages: {
+      sheet:   'Top Pages by Division',
+      headers: ['Page Name', 'Clicks', 'Downloads', 'Top Division', 'Top Division Clicks', 'Top Region', 'Top Region Clicks'],
+      cols:    ['page_name', 'clicks', 'downloads', 'top_division', 'top_division_clicks', 'top_region', 'top_region_clicks'],
+      numIdx:  [1, 2, 4, 6],
+      linkIdx: [],
+      totalsLabelSpan: 0,
+    },
+  };
+  const SPEC = SPECS[key];
+  if (!SPEC) { alert('Unknown export key: ' + key); return; }
 
   try {
     const wb = new ExcelJS.Workbook();
@@ -1315,28 +2217,30 @@ window.exportTable = async function(key) {
       });
     });
 
-    // ---- Totals row ----
-    const totalsValues = SPEC.cols.map((c, i) => {
-      if (i === 0) return 'Overall (filtered)';
-      if (i < SPEC.totalsLabelSpan) return '';
-      if (data.totals && c in data.totals) return toCellValue(data.totals[c]);
-      return '';
-    });
-    const totalRow = ws.addRow(totalsValues);
-    if (SPEC.totalsLabelSpan > 1) ws.mergeCells(totalRow.number, 1, totalRow.number, SPEC.totalsLabelSpan);
-    totalRow.eachCell({ includeEmpty: true }, (cell, colIdx) => {
-      const i = colIdx - 1;
-      const isNum = SPEC.numIdx.includes(i);
-      cell.font = { name: 'Arial', bold: true, size: 10, color: { argb: 'FF000000' } };
-      cell.alignment = { horizontal: isNum ? 'right' : 'left', vertical: 'middle' };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECEBE4' } };
-      cell.border = {
-        top:    { style: 'medium', color: { argb: 'FFE60000' } },
-        bottom: { style: 'thin',   color: { argb: 'FFCCCABC' } },
-        right:  { style: 'thin',   color: { argb: 'FFCCCABC' } },
-      };
-      if (isNum) cell.numFmt = '#,##0';
-    });
+    // ---- Totals row (skipped when SPEC has no totals or data.totals missing) ----
+    if (SPEC.totalsLabelSpan > 0 && data.totals) {
+      const totalsValues = SPEC.cols.map((c, i) => {
+        if (i === 0) return 'Overall (filtered)';
+        if (i < SPEC.totalsLabelSpan) return '';
+        if (c in data.totals) return toCellValue(data.totals[c]);
+        return '';
+      });
+      const totalRow = ws.addRow(totalsValues);
+      if (SPEC.totalsLabelSpan > 1) ws.mergeCells(totalRow.number, 1, totalRow.number, SPEC.totalsLabelSpan);
+      totalRow.eachCell({ includeEmpty: true }, (cell, colIdx) => {
+        const i = colIdx - 1;
+        const isNum = SPEC.numIdx.includes(i);
+        cell.font = { name: 'Arial', bold: true, size: 10, color: { argb: 'FF000000' } };
+        cell.alignment = { horizontal: isNum ? 'right' : 'left', vertical: 'middle' };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECEBE4' } };
+        cell.border = {
+          top:    { style: 'medium', color: { argb: 'FFE60000' } },
+          bottom: { style: 'thin',   color: { argb: 'FFCCCABC' } },
+          right:  { style: 'thin',   color: { argb: 'FFCCCABC' } },
+        };
+        if (isNum) cell.numFmt = '#,##0';
+      });
+    }
 
     // ---- Column widths (sample first 100 rows) ----
     ws.columns.forEach((col, i) => {

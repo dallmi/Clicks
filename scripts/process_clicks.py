@@ -1761,8 +1761,11 @@ def process_clicks(input_file=None, full_refresh=False):
     output_dir = project_root / 'output'
     db_path = data_dir / 'clicks.db'
 
-    # HR history parquet from SearchAnalytics
-    hr_parquet_path = project_root.parent / 'SearchAnalytics' / 'output' / 'hr_history.parquet'
+    # HR history parquet — prefer local seed (Clicks-specific GPNs),
+    # fall back to SearchAnalytics' real HR snapshot when present.
+    local_hr_path  = project_root / 'output' / 'hr_history.parquet'
+    shared_hr_path = project_root.parent / 'SearchAnalytics' / 'output' / 'hr_history.parquet'
+    hr_parquet_path = local_hr_path if local_hr_path.exists() else shared_hr_path
 
     # Create directories
     input_dir.mkdir(parents=True, exist_ok=True)
