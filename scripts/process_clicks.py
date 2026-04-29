@@ -79,7 +79,7 @@ def hmac_hash_gpn(gpn_value: str) -> str:
 
 def register_hmac_udf(con):
     """Register hmac_hash as a DuckDB scalar UDF for use in SQL queries."""
-    con.create_function('hmac_hash', hmac_hash_gpn, [duckdb.typing.VARCHAR], duckdb.typing.VARCHAR)
+    con.create_function('hmac_hash', hmac_hash_gpn, ['VARCHAR'], 'VARCHAR')
 
 
 def log(message):
