@@ -1363,10 +1363,12 @@ async function renderKPIs() {
   const links = `COUNT(DISTINCT ${columns.linkAddress})`;
   const totalClicks = `COUNT(*)`;
   const uniqueClicks = `COUNT(DISTINCT (${columns.gpn} || '|' || COALESCE(${columns.linkAddress}, '')))`;
+  const distinctClickers = `COUNT(DISTINCT ${columns.gpn})`;
 
   const r = (await q(`
     SELECT ${sites} AS sites, ${pages} AS pages, ${links} AS links,
-           ${totalClicks} AS total_clicks, ${uniqueClicks} AS unique_clicks, ${dl} AS downloads
+           ${totalClicks} AS total_clicks, ${uniqueClicks} AS unique_clicks,
+           ${distinctClickers} AS distinct_clickers, ${dl} AS downloads
     FROM events ${w}
   `))[0];
 
@@ -1382,8 +1384,9 @@ async function renderKPIs() {
     card('',        'Number of Pages',         r.pages),
     card('info',    'Number of Links Clicked', r.links,         'distinct link targets'),
     card('',        'Total Clicks',            r.total_clicks),
-    card('success', 'Unique Clicks',           r.unique_clicks, 'distinct user × link'),
-    card('warning', 'Total Downloads',         r.downloads,     'events with file type')
+    card('success', 'Unique Clicks',           r.unique_clicks,    'distinct user × link'),
+    card('info',    'Distinct Clickers',       r.distinct_clickers, 'distinct GPNs with ≥1 click'),
+    card('warning', 'Total Downloads',         r.downloads,        'events with file type')
   ].join('');
 }
 
