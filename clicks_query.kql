@@ -1,71 +1,78 @@
 // ============================================================================
-// Clicks Query - Flatten ALL click_event data from Application Insights
+// Clicks Query - Flatten click_event data from Application Insights
 // ============================================================================
-// Purpose: Extract and flatten click_event data from Application Insights
-//          customEvents table. Unlike the CampaignWe query, this captures
-//          ALL intranet clicks without filtering on a specific page.
+// Purpose: Extract click_event rows with all known CustomProps fields as
+//          flat columns (CP_* prefix). Designed to stay under the 65 MB
+//          App Insights result-size cap by:
+//            1. Filtering early (PageStatus, PageURL, time window).
+//            2. Projecting only known columns (no mv-expand of unknown keys).
+//            3. Forcing every CP_* value to string (predictable types).
 //
-// Data Structure:
-//   Top-level columns: timestamp, name, user_Id, session_Id, client_CountryOrRegion
-//   customDimensions:  Contains ONE key: "CustomProps" (JSON string)
-//   CustomProps keys:  SiteID, SiteName, PageId, PageName, PageURL, PageStatus,
-//                      ComponentName, ContentOwner, ContentType, Email, GPN,
-//                      FileName_Label, FileType_Label, Link_Type, Link_address,
-//                      Link_ancestors, Link_label, NewsCategory, PublishingDate,
-//                      Topic, Theme, TargetOrg, TargetRegion, mfLst,
-//                      Video_Action, Video_Id, Video_Title, Video_Type,
-//                      Video_Duration, Video_PlayedTime, Video_Address
+// Output: One row per click event. Columns:
+//   timestamp [UTC] (formatted to microsecond precision for CSV export)
+//   name, user_Id, session_Id, client_CountryOrRegion
+//   CP_<Field> for every documented CustomProps key
 //
-// Notes on values observed in production data:
-//   Link_Type:   span, div, anchor, icon, button, image, video (plus blank)
-//   PageStatus:  Published (filtered to this), Draft, Archived, ...
-//   Link_label:  free-text; "NO_LABEL" sentinel used when label is absent
-//   Video_*:     present only on video-related events (~10% of events)
-//   Topic/Theme/TargetOrg/TargetRegion: present on news/article pages (~66% of events)
+// Filters applied to the main query:
+//   - name == "click_event"
+//   - PageStatus == "Published"  (drafts/archived excluded)
+//   - PageURL contains UrlPattern (set "" to disable)
+//   - Time range is taken from the App Insights UI time picker
+//     (no `where timestamp` clause in the query — the UI injects it).
 //
-// Output: All CustomProps keys become columns with CP_ prefix.
+// CHUNKING (when 65 MB result cap is hit):
+//   Use the UI time-range picker to narrow the window (e.g. 7 days at a
+//   time) and re-run; concatenate the resulting CSVs.
 //
-// FILTER: Only events on pages with PageStatus == "Published" are returned.
-//         Drafts, archived, and other non-published states are excluded.
-//
-// HOW TO USE: Copy from "set truncationmaxrecords" to "order by"
-//
-// NOTE: 'timestamp [UTC]' is formatted as 'dd/MM/yyyy HH:mm:ss.fffffff' to preserve
-//       millisecond precision for CSV export (Excel truncates the native format).
+// HOW TO USE: Copy from "set truncationmaxrecords" to "order by".
 // ============================================================================
 
 
 // === COPY FROM HERE ===
 set truncationmaxrecords = 500000;
-let TimeRange = 90d;
-let CustomPropsPrefix = "CP_";
-let ClickData = customEvents
-    | where timestamp >= ago(TimeRange)
-    | where name == 'click_event'
-    | extend cd = todynamic(customDimensions)
-    // --- customDimensions has ONE key: CustomProps (JSON string with all fields) ---
-    | extend CustomPropsRaw = tostring(cd.CustomProps)
-    | extend CP = iff(isnotempty(CustomPropsRaw) and CustomPropsRaw startswith "{", todynamic(CustomPropsRaw), dynamic({}))
-    // --- Restrict to Published pages only (drop drafts, archived, etc.) ---
-    | where tostring(CP.PageStatus) == "Published"
-    | serialize
-    | extend rowId = row_number()
-    // --- Expand CustomProps keys (flat key-value pairs) ---
-    | extend cpKeys = bag_keys(CP)
-    | extend cpKeys = iff(array_length(cpKeys) == 0, dynamic(["__no_cp__"]), cpKeys)
-    | mv-expand cpKey = cpKeys to typeof(string)
-    | extend cpValue = tostring(CP[cpKey])
-    // --- Build flattened key-value pairs with CP_ prefix ---
-    | extend kvBag = iff(cpKey == "__no_cp__", dynamic({}), pack(strcat(CustomPropsPrefix, cpKey), cpValue))
-    // --- Reaggregate back to one row per event ---
-    | summarize take_any(timestamp), take_any(name), take_any(client_CountryOrRegion), take_any(user_Id), take_any(session_Id), merged = make_bag(kvBag) by rowId
-    | extend finalBag = coalesce(merged, dynamic({}));
-ClickData
-| evaluate bag_unpack(finalBag)
-| project-away rowId, merged
-| extend ['timestamp [UTC]'] = format_datetime(timestamp, 'dd/MM/yyyy HH:mm:ss.fffffff')
-| project-away timestamp
-| project-reorder ['timestamp [UTC]'], name, client_CountryOrRegion, user_Id, session_Id
+let UrlPattern = "";  // empty = match all pages
+customEvents
+| where name == "click_event"
+| extend CP = todynamic(tostring(todynamic(customDimensions).CustomProps))
+| where tostring(CP.PageStatus) == "Published"
+| where UrlPattern == "" or tostring(CP.PageURL) contains UrlPattern
+| project
+    ['timestamp [UTC]']     = format_datetime(timestamp, 'dd/MM/yyyy HH:mm:ss.fffffff'),
+    name,
+    user_Id,
+    session_Id,
+    client_CountryOrRegion,
+    CP_SiteID               = tostring(CP.SiteID),
+    CP_SiteName             = tostring(CP.SiteName),
+    CP_PageId               = tostring(CP.PageId),
+    CP_PageName             = tostring(CP.PageName),
+    CP_PageURL              = tostring(CP.PageURL),
+    CP_PageStatus           = tostring(CP.PageStatus),
+    CP_ContentType          = tostring(CP.ContentType),
+    CP_ContentOwner         = tostring(CP.ContentOwner),
+    CP_ComponentName        = tostring(CP.ComponentName),
+    CP_GPN                  = tostring(CP.GPN),
+    CP_Email                = tostring(CP.Email),
+    CP_Link_Type            = tostring(CP.Link_Type),
+    CP_Link_label           = tostring(CP.Link_label),
+    CP_Link_address         = tostring(CP.Link_address),
+    CP_Link_ancestors       = tostring(CP.Link_ancestors),
+    CP_FileType_Label       = tostring(CP.FileType_Label),
+    CP_FileName_Label       = tostring(CP.FileName_Label),
+    CP_NewsCategory         = tostring(CP.NewsCategory),
+    CP_PublishingDate       = tostring(CP.PublishingDate),
+    CP_Topic                = tostring(CP.Topic),
+    CP_Theme                = tostring(CP.Theme),
+    CP_TargetOrg            = tostring(CP.TargetOrg),
+    CP_TargetRegion         = tostring(CP.TargetRegion),
+    CP_mfLst                = tostring(CP.mfLst),
+    CP_Video_Action         = tostring(CP.Video_Action),
+    CP_Video_Id             = tostring(CP.Video_Id),
+    CP_Video_Title          = tostring(CP.Video_Title),
+    CP_Video_Type           = tostring(CP.Video_Type),
+    CP_Video_Duration       = tostring(CP.Video_Duration),
+    CP_Video_PlayedTime     = tostring(CP.Video_PlayedTime),
+    CP_Video_Address        = tostring(CP.Video_Address)
 | order by ['timestamp [UTC]'] desc
 // === COPY TO HERE ===
 
@@ -74,105 +81,119 @@ ClickData
 // ALTERNATIVE QUERIES (copy/paste separately)
 // ============================================================================
 
-// --- QUERY A: Key discovery - find all unique CustomProps keys ---
-// customEvents | where timestamp >= ago(30d) | where name == 'click_event' | extend cd = todynamic(customDimensions) | extend CP = todynamic(tostring(cd.CustomProps)) | extend cpKeys = bag_keys(CP) | mv-expand cpKey = cpKeys to typeof(string) | summarize KeyCount = count(), SampleValue = take_any(tostring(CP[cpKey])) by Key = cpKey | order by KeyCount desc
+// --- QUERY A: Key discovery ---
+// Find every CustomProps key currently in use and its hit count. Use to
+// detect new fields that should be added to the projection above.
+// Time range comes from the App Insights UI time picker.
+//
+// customEvents
+// | where name == "click_event"
+// | extend CP = todynamic(tostring(todynamic(customDimensions).CustomProps))
+// | mv-expand cpKey = bag_keys(CP) to typeof(string)
+// | summarize KeyCount = count(), SampleValue = take_any(tostring(CP[cpKey])) by Key = cpKey
+// | order by KeyCount desc
 
-// --- QUERY B: Simplified version (no CP_ prefix, just unpack CustomProps) ---
-// customEvents | where timestamp >= ago(30d) | where name == 'click_event' | extend cd = todynamic(customDimensions) | extend CP = todynamic(tostring(cd.CustomProps)) | evaluate bag_unpack(CP) | project-reorder timestamp, name | order by timestamp desc
 
 // --- QUERY C: Anonymized extraction (hash GPN, drop Email) ---
+// Same shape as the main query, but GPN is HMAC-SHA256-hashed with a
+// pepper and CP_Email is replaced with empty string. Drop the resulting
+// CSV into input/ and process_clicks.py picks it up unchanged.
+// Time range comes from the App Insights UI time picker.
 set truncationmaxrecords = 500000;
-let TimeRange = 90d;
-let pepper = 'f4c6a28e86cfa11e95ee832cabf4c8c1862f78017c044111cae083584f0208cb';
-let CustomPropsPrefix = "CP_";
-let ClickData = customEvents
-    | where timestamp >= ago(TimeRange)
-    | where name == 'click_event'
-    | extend cd = todynamic(customDimensions)
-    | extend CustomPropsRaw = tostring(cd.CustomProps)
-    | extend CP = iff(isnotempty(CustomPropsRaw) and CustomPropsRaw startswith "{", todynamic(CustomPropsRaw), dynamic({}))
-    | where tostring(CP.PageStatus) == "Published"
-    | serialize
-    | extend rowId = row_number()
-    | extend cpKeys = bag_keys(CP)
-    | extend cpKeys = iff(array_length(cpKeys) == 0, dynamic(["__no_cp__"]), cpKeys)
-    | mv-expand cpKey = cpKeys to typeof(string)
-    | extend cpValue = tostring(CP[cpKey])
-    | extend kvBag = iff(cpKey == "__no_cp__", dynamic({}), pack(strcat(CustomPropsPrefix, cpKey), cpValue))
-    | summarize take_any(timestamp), take_any(name), take_any(client_CountryOrRegion), take_any(user_Id), take_any(session_Id), merged = make_bag(kvBag) by rowId
-    | extend finalBag = coalesce(merged, dynamic({}));
-ClickData
-| evaluate bag_unpack(finalBag)
-| project-away rowId, merged
-| extend CP_GPN = hash_sha256(strcat(pepper, tostring(CP_GPN)))
-| project-away CP_Email
-| extend ['timestamp [UTC]'] = format_datetime(timestamp, 'dd/MM/yyyy HH:mm:ss.fffffff')
-| project-away timestamp
-| project-reorder ['timestamp [UTC]'], name, client_CountryOrRegion, user_Id, session_Id
-| order by ['timestamp [UTC]'] desc
-
-
-// --- QUERY E: Filter by URL pattern (change UrlPattern value) ---
-// Output is identical in shape to the default query → drop the CSV into input/
-// and run scripts/process_clicks.py without any code changes.
-// Filter operators: contains | startswith | endswith | matches regex | has_any
-set truncationmaxrecords = 500000;
-let TimeRange = 90d;
-let UrlPattern = "/news/";
-let CustomPropsPrefix = "CP_";
-let ClickData = customEvents
-    | where timestamp >= ago(TimeRange)
-    | where name == 'click_event'
-    | extend cd = todynamic(customDimensions)
-    | extend CustomPropsRaw = tostring(cd.CustomProps)
-    | extend CP = iff(isnotempty(CustomPropsRaw) and CustomPropsRaw startswith "{", todynamic(CustomPropsRaw), dynamic({}))
-    | where tostring(CP.PageStatus) == "Published"
-    | where tostring(CP.PageURL) contains UrlPattern
-    | serialize
-    | extend rowId = row_number()
-    | extend cpKeys = bag_keys(CP)
-    | extend cpKeys = iff(array_length(cpKeys) == 0, dynamic(["__no_cp__"]), cpKeys)
-    | mv-expand cpKey = cpKeys to typeof(string)
-    | extend cpValue = tostring(CP[cpKey])
-    | extend kvBag = iff(cpKey == "__no_cp__", dynamic({}), pack(strcat(CustomPropsPrefix, cpKey), cpValue))
-    | summarize take_any(timestamp), take_any(name), take_any(client_CountryOrRegion), take_any(user_Id), take_any(session_Id), merged = make_bag(kvBag) by rowId
-    | extend finalBag = coalesce(merged, dynamic({}));
-ClickData
-| evaluate bag_unpack(finalBag)
-| project-away rowId, merged
-| extend ['timestamp [UTC]'] = format_datetime(timestamp, 'dd/MM/yyyy HH:mm:ss.fffffff')
-| project-away timestamp
-| project-reorder ['timestamp [UTC]'], name, client_CountryOrRegion, user_Id, session_Id
+let UrlPattern = "";
+let pepper     = "f4c6a28e86cfa11e95ee832cabf4c8c1862f78017c044111cae083584f0208cb";
+customEvents
+| where name == "click_event"
+| extend CP = todynamic(tostring(todynamic(customDimensions).CustomProps))
+| where tostring(CP.PageStatus) == "Published"
+| where UrlPattern == "" or tostring(CP.PageURL) contains UrlPattern
+| project
+    ['timestamp [UTC]']     = format_datetime(timestamp, 'dd/MM/yyyy HH:mm:ss.fffffff'),
+    name,
+    user_Id,
+    session_Id,
+    client_CountryOrRegion,
+    CP_SiteID               = tostring(CP.SiteID),
+    CP_SiteName             = tostring(CP.SiteName),
+    CP_PageId               = tostring(CP.PageId),
+    CP_PageName             = tostring(CP.PageName),
+    CP_PageURL              = tostring(CP.PageURL),
+    CP_PageStatus           = tostring(CP.PageStatus),
+    CP_ContentType          = tostring(CP.ContentType),
+    CP_ContentOwner         = tostring(CP.ContentOwner),
+    CP_ComponentName        = tostring(CP.ComponentName),
+    CP_GPN                  = hash_sha256(strcat(pepper, tostring(CP.GPN))),
+    CP_Email                = "",
+    CP_Link_Type            = tostring(CP.Link_Type),
+    CP_Link_label           = tostring(CP.Link_label),
+    CP_Link_address         = tostring(CP.Link_address),
+    CP_Link_ancestors       = tostring(CP.Link_ancestors),
+    CP_FileType_Label       = tostring(CP.FileType_Label),
+    CP_FileName_Label       = tostring(CP.FileName_Label),
+    CP_NewsCategory         = tostring(CP.NewsCategory),
+    CP_PublishingDate       = tostring(CP.PublishingDate),
+    CP_Topic                = tostring(CP.Topic),
+    CP_Theme                = tostring(CP.Theme),
+    CP_TargetOrg            = tostring(CP.TargetOrg),
+    CP_TargetRegion         = tostring(CP.TargetRegion),
+    CP_mfLst                = tostring(CP.mfLst),
+    CP_Video_Action         = tostring(CP.Video_Action),
+    CP_Video_Id             = tostring(CP.Video_Id),
+    CP_Video_Title          = tostring(CP.Video_Title),
+    CP_Video_Type           = tostring(CP.Video_Type),
+    CP_Video_Duration       = tostring(CP.Video_Duration),
+    CP_Video_PlayedTime     = tostring(CP.Video_PlayedTime),
+    CP_Video_Address        = tostring(CP.Video_Address)
 | order by ['timestamp [UTC]'] desc
 
 
 // --- QUERY D: Filter by specific email (change EmailFilter value) ---
-// NOTE: Uses plain-text GPN/Email for filtering — not anonymized
+// NOTE: Uses plain-text GPN/Email for filtering — not anonymized.
+// Time range comes from the App Insights UI time picker.
 set truncationmaxrecords = 500000;
-let TimeRange = 90d;
+let UrlPattern  = "";
 let EmailFilter = "john.doe";
-let CustomPropsPrefix = "CP_";
-let ClickData = customEvents
-    | where timestamp >= ago(TimeRange)
-    | where name == 'click_event'
-    | extend cd = todynamic(customDimensions)
-    | extend CustomPropsRaw = tostring(cd.CustomProps)
-    | extend CP = iff(isnotempty(CustomPropsRaw) and CustomPropsRaw startswith "{", todynamic(CustomPropsRaw), dynamic({}))
-    | where tostring(CP.PageStatus) == "Published"
-    | where tostring(CP.Email) contains EmailFilter
-    | serialize
-    | extend rowId = row_number()
-    | extend cpKeys = bag_keys(CP)
-    | extend cpKeys = iff(array_length(cpKeys) == 0, dynamic(["__no_cp__"]), cpKeys)
-    | mv-expand cpKey = cpKeys to typeof(string)
-    | extend cpValue = tostring(CP[cpKey])
-    | extend kvBag = iff(cpKey == "__no_cp__", dynamic({}), pack(strcat(CustomPropsPrefix, cpKey), cpValue))
-    | summarize take_any(timestamp), take_any(name), take_any(client_CountryOrRegion), take_any(user_Id), take_any(session_Id), merged = make_bag(kvBag) by rowId
-    | extend finalBag = coalesce(merged, dynamic({}));
-ClickData
-| evaluate bag_unpack(finalBag)
-| project-away rowId, merged
-| extend ['timestamp [UTC]'] = format_datetime(timestamp, 'dd/MM/yyyy HH:mm:ss.fffffff')
-| project-away timestamp
-| project-reorder ['timestamp [UTC]'], name, client_CountryOrRegion, user_Id, session_Id
+customEvents
+| where name == "click_event"
+| extend CP = todynamic(tostring(todynamic(customDimensions).CustomProps))
+| where tostring(CP.PageStatus) == "Published"
+| where UrlPattern == "" or tostring(CP.PageURL) contains UrlPattern
+| where tostring(CP.Email) contains EmailFilter
+| project
+    ['timestamp [UTC]']     = format_datetime(timestamp, 'dd/MM/yyyy HH:mm:ss.fffffff'),
+    name,
+    user_Id,
+    session_Id,
+    client_CountryOrRegion,
+    CP_SiteID               = tostring(CP.SiteID),
+    CP_SiteName             = tostring(CP.SiteName),
+    CP_PageId               = tostring(CP.PageId),
+    CP_PageName             = tostring(CP.PageName),
+    CP_PageURL              = tostring(CP.PageURL),
+    CP_PageStatus           = tostring(CP.PageStatus),
+    CP_ContentType          = tostring(CP.ContentType),
+    CP_ContentOwner         = tostring(CP.ContentOwner),
+    CP_ComponentName        = tostring(CP.ComponentName),
+    CP_GPN                  = tostring(CP.GPN),
+    CP_Email                = tostring(CP.Email),
+    CP_Link_Type            = tostring(CP.Link_Type),
+    CP_Link_label           = tostring(CP.Link_label),
+    CP_Link_address         = tostring(CP.Link_address),
+    CP_Link_ancestors       = tostring(CP.Link_ancestors),
+    CP_FileType_Label       = tostring(CP.FileType_Label),
+    CP_FileName_Label       = tostring(CP.FileName_Label),
+    CP_NewsCategory         = tostring(CP.NewsCategory),
+    CP_PublishingDate       = tostring(CP.PublishingDate),
+    CP_Topic                = tostring(CP.Topic),
+    CP_Theme                = tostring(CP.Theme),
+    CP_TargetOrg            = tostring(CP.TargetOrg),
+    CP_TargetRegion         = tostring(CP.TargetRegion),
+    CP_mfLst                = tostring(CP.mfLst),
+    CP_Video_Action         = tostring(CP.Video_Action),
+    CP_Video_Id             = tostring(CP.Video_Id),
+    CP_Video_Title          = tostring(CP.Video_Title),
+    CP_Video_Type           = tostring(CP.Video_Type),
+    CP_Video_Duration       = tostring(CP.Video_Duration),
+    CP_Video_PlayedTime     = tostring(CP.Video_PlayedTime),
+    CP_Video_Address        = tostring(CP.Video_Address)
 | order by ['timestamp [UTC]'] desc
