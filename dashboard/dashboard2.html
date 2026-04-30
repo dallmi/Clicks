@@ -1164,16 +1164,24 @@ async function init() {
 }
 
 async function loadParquet() {
+  // Fetch the parquet ourselves and register it as an in-memory file in
+  // DuckDB-WASM's virtual filesystem. Avoids depending on HTTP Range
+  // support (Python's http.server doesn't support it).
   const base = window.location.origin + window.location.pathname.replace(/\/[^\/]*$/, '');
   const candidates = [
-    `${base}/../output/events_raw.parquet`,
     `${window.location.origin}/output/events_raw.parquet`,
+    `${base}/../output/events_raw.parquet`,
     `${base}/output/events_raw.parquet`
   ];
   let lastErr;
   for (const url of candidates) {
     try {
-      await conn.query(`CREATE OR REPLACE VIEW events AS SELECT * FROM read_parquet('${url}')`);
+      const res = await fetch(url);
+      if (!res.ok) { lastErr = new Error(`HTTP ${res.status} for ${url}`); continue; }
+      setLoadingText(`Downloading events_raw.parquet (${(res.headers.get('content-length') / 1e6).toFixed(1)} MB)…`);
+      const buf = new Uint8Array(await res.arrayBuffer());
+      await db.registerFileBuffer('events_raw.parquet', buf);
+      await conn.query(`CREATE OR REPLACE VIEW events AS SELECT * FROM read_parquet('events_raw.parquet')`);
       return;
     } catch (e) { lastErr = e; }
   }
