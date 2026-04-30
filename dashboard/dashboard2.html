@@ -1421,7 +1421,7 @@ async function renderPagesTable() {
       : `0`;
 
   const sort = sortState.pages;
-  const rows = await q(`
+  const baseQuery = `
     SELECT
       COALESCE(${pageCol}, '(unknown)') AS page_name,
       COALESCE(${urlCol},  '')          AS url,
@@ -1431,9 +1431,8 @@ async function renderPagesTable() {
       ${dlExpr} AS downloads
     FROM events ${w}
     GROUP BY 1, 2
-    ORDER BY ${sort.col} ${sort.dir.toUpperCase()}
-    LIMIT ${TABLE_LIMIT}
-  `);
+    ORDER BY ${sort.col} ${sort.dir.toUpperCase()}`;
+  const rows = await q(`${baseQuery} LIMIT ${TABLE_LIMIT}`);
 
   const totals = (await q(`
     SELECT
@@ -1444,7 +1443,7 @@ async function renderPagesTable() {
     FROM events ${w}
   `))[0];
 
-  lastResults.pages = { rows, totals };
+  lastResults.pages = { rows, totals, baseQuery };
   document.getElementById('pagesMeta').textContent = `Top ${rows.length}`;
 
   document.getElementById('pagesTable').innerHTML = `
@@ -1495,7 +1494,7 @@ async function renderLinksTable() {
       : `0`;
 
   const sort = sortState.links;
-  const rows = await q(`
+  const baseQuery = `
     SELECT
       COALESCE(${urlCol},  '')          AS page_url,
       COALESCE(${pageCol}, '(unknown)') AS page_name,
@@ -1506,9 +1505,8 @@ async function renderLinksTable() {
       ${dlExpr} AS downloads
     FROM events ${w}
     GROUP BY 1, 2, 3, 4
-    ORDER BY ${sort.col} ${sort.dir.toUpperCase()}
-    LIMIT ${TABLE_LIMIT}
-  `);
+    ORDER BY ${sort.col} ${sort.dir.toUpperCase()}`;
+  const rows = await q(`${baseQuery} LIMIT ${TABLE_LIMIT}`);
 
   const totals = (await q(`
     SELECT
@@ -1518,7 +1516,7 @@ async function renderLinksTable() {
     FROM events ${w}
   `))[0];
 
-  lastResults.links = { rows, totals };
+  lastResults.links = { rows, totals, baseQuery };
   document.getElementById('linksMeta').textContent = `Top ${rows.length}`;
 
   document.getElementById('linksTable').innerHTML = `
@@ -1904,7 +1902,7 @@ async function renderTopDownloadsByDivision() {
   const regCol      = columns.hrRegion   || `NULL`;
   const sort = sortState.audDownloads;
 
-  const rows = await q(`
+  const baseQuery = `
     WITH per_combo AS (
       SELECT
         COALESCE(${columns.fileName || `'(unknown)'`}, '(unknown)') AS file_name,
@@ -1940,11 +1938,10 @@ async function renderTopDownloadsByDivision() {
     FROM file_totals ft
     LEFT JOIN top_div td ON ft.file_name = td.file_name AND ft.file_type = td.file_type AND td.rn = 1
     LEFT JOIN top_reg tr ON ft.file_name = tr.file_name AND ft.file_type = tr.file_type AND tr.rn = 1
-    ORDER BY ${sort.col} ${sort.dir.toUpperCase()} NULLS LAST
-    LIMIT ${TABLE_LIMIT}
-  `);
+    ORDER BY ${sort.col} ${sort.dir.toUpperCase()} NULLS LAST`;
+  const rows = await q(`${baseQuery} LIMIT ${TABLE_LIMIT}`);
 
-  lastResults.audDownloads = { rows, totals: null };
+  lastResults.audDownloads = { rows, totals: null, baseQuery };
   document.getElementById('topDownloadsMeta').textContent = `Top ${rows.length}`;
 
   target.innerHTML = `
@@ -1995,7 +1992,7 @@ async function renderTopPagesByDivision() {
   const regCol  = columns.hrRegion   || `NULL`;
   const sort = sortState.audPages;
 
-  const rows = await q(`
+  const baseQuery = `
     WITH per_combo AS (
       SELECT
         COALESCE(${pageCol}, '(unknown)') AS page_name,
@@ -2031,11 +2028,10 @@ async function renderTopPagesByDivision() {
     FROM page_totals pt
     LEFT JOIN top_div td ON pt.page_name = td.page_name AND td.rn = 1
     LEFT JOIN top_reg tr ON pt.page_name = tr.page_name AND tr.rn = 1
-    ORDER BY ${sort.col} ${sort.dir.toUpperCase()} NULLS LAST
-    LIMIT ${TABLE_LIMIT}
-  `);
+    ORDER BY ${sort.col} ${sort.dir.toUpperCase()} NULLS LAST`;
+  const rows = await q(`${baseQuery} LIMIT ${TABLE_LIMIT}`);
 
-  lastResults.audPages = { rows, totals: null };
+  lastResults.audPages = { rows, totals: null, baseQuery };
   document.getElementById('topPagesAudMeta').textContent = `Top ${rows.length}`;
 
   target.innerHTML = `
@@ -2141,10 +2137,29 @@ function toCellValue(v) {
 }
 
 window.exportTable = async function(key) {
-  const data = lastResults[key];
-  if (!data || !data.rows || data.rows.length === 0) {
+  const cached = lastResults[key];
+  if (!cached || !cached.rows || cached.rows.length === 0) {
     alert('No data available to export. Please wait for the dashboard to finish loading or adjust your filters.');
     return;
+  }
+
+  // Re-run the row query without LIMIT so the export contains the full
+  // result set, not just the top 100 rows visible in the table.
+  let data = cached;
+  if (cached.baseQuery) {
+    const prevStatus = document.getElementById('status').textContent;
+    setStatus('loading', 'Exporting full result set…');
+    try {
+      const fullRows = await q(cached.baseQuery);
+      data = { ...cached, rows: fullRows };
+    } catch (err) {
+      console.error('Export query failed:', err);
+      setStatus('error', 'Export failed');
+      alert('Export failed: ' + err.message);
+      return;
+    } finally {
+      setStatus('ready', prevStatus === 'Exporting full result set…' ? 'Ready' : prevStatus);
+    }
   }
 
   const SPECS = {
