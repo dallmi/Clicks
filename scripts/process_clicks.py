@@ -724,7 +724,11 @@ def aggregate_video_engagement(con, output_dir):
         return 'NULL'
 
     # ── Step 1: Filter and normalize video events ──
+    # CAST to VARCHAR first: DuckDB's CSV auto-detect can infer mostly-empty
+    # video columns as NULL/BOOLEAN/INT types, which breaks TRIM/LOWER.
     log("  Step 1: Filtering video events...")
+    action_str = f'CAST("{video_action_col}" AS VARCHAR)'
+    id_str     = f'CAST("{video_id_col}" AS VARCHAR)'
     con.execute("DROP TABLE IF EXISTS video_events")
     con.execute(f"""
         CREATE TEMP TABLE video_events AS
@@ -732,17 +736,17 @@ def aggregate_video_engagement(con, output_dir):
             timestamp,
             gpn,
             session_id,
-            LOWER(TRIM("{video_action_col}")) AS action,
-            TRIM("{video_id_col}") AS video_id,
-            {col_or_null(video_title_col)} AS video_title,
+            LOWER(TRIM({action_str})) AS action,
+            TRIM({id_str}) AS video_id,
+            {col_or_null(video_title_col, 'VARCHAR')} AS video_title,
             {col_or_null(video_duration_col, 'DOUBLE')} AS video_duration,
             {col_or_null(video_played_col, 'DOUBLE')} AS current_time_pos,
-            {col_or_null(video_type_col)} AS video_type,
-            {col_or_null(video_address_col)} AS video_address
+            {col_or_null(video_type_col, 'VARCHAR')} AS video_type,
+            {col_or_null(video_address_col, 'VARCHAR')} AS video_address
         FROM events
-        WHERE "{video_action_col}" IS NOT NULL
-          AND LOWER(TRIM("{video_action_col}")) IN ('play', 'pause', 'resume', 'ended')
-          AND "{video_id_col}" IS NOT NULL AND TRIM("{video_id_col}") != ''
+        WHERE {action_str} IS NOT NULL
+          AND LOWER(TRIM({action_str})) IN ('play', 'pause', 'resume', 'ended')
+          AND {id_str} IS NOT NULL AND TRIM({id_str}) != ''
           AND gpn IS NOT NULL AND gpn != ''
           AND timestamp IS NOT NULL
     """)
