@@ -1511,8 +1511,8 @@ async function renderLinksTable() {
         <tr>
           ${th('links', 'page_url', 'Page URL')}
           ${th('links', 'page_name', 'Page Name')}
-          ${th('links', 'link_title', 'Link Title')}
-          ${th('links', 'destination', 'Destination Link')}
+          ${th('links', 'link_title', 'Link Label')}
+          ${th('links', 'destination', 'Link Address')}
           ${th('links', 'total_clicks', 'Total Clicks', true)}
           ${th('links', 'unique_clicks', 'Unique Clicks', true)}
           ${th('links', 'downloads', 'Total Downloads', true)}
@@ -2142,7 +2142,7 @@ window.exportTable = async function(key) {
     },
     links: {
       sheet:   'Links',
-      headers: ['Page URL', 'Page Name', 'Link Title', 'Destination Link', 'Total Clicks', 'Unique Clicks', 'Total Downloads'],
+      headers: ['Page URL', 'Page Name', 'Link Label', 'Link Address', 'Total Clicks', 'Unique Clicks', 'Total Downloads'],
       cols:    ['page_url', 'page_name', 'link_title', 'destination', 'total_clicks', 'unique_clicks', 'downloads'],
       numIdx:  [4, 5, 6],
       linkIdx: [0, 3],
