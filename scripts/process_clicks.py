@@ -279,6 +279,19 @@ def load_file_to_temp_table(con, input_path, temp_table='temp_import'):
         if old_name in col_names:
             con.execute(f'ALTER TABLE {temp_table} RENAME COLUMN "{old_name}" TO {new_name}')
 
+    # Force every CP_* column to VARCHAR. DuckDB's CSV auto-detect can infer
+    # sparse / homogeneously-numeric CustomProps as DOUBLE/INT/BOOLEAN, which
+    # later breaks COALESCE(col, '(none)'), TRIM(), LOWER(), etc.
+    schema = con.execute(f"DESCRIBE {temp_table}").df()
+    coerced = []
+    for _, r in schema.iterrows():
+        col, typ = r['column_name'], r['column_type']
+        if col.startswith('CP_') and typ != 'VARCHAR':
+            con.execute(f'ALTER TABLE {temp_table} ALTER COLUMN "{col}" TYPE VARCHAR')
+            coerced.append(f'{col} ({typ})')
+    if coerced:
+        log(f"  Coerced to VARCHAR: {', '.join(coerced)}")
+
     # Convert date formats (German dd.MM.yyyy and App Insights dd/MM/yyyy)
     schema = con.execute(f"DESCRIBE {temp_table}").df()
     varchar_cols = schema[schema['column_type'] == 'VARCHAR']['column_name'].tolist()
