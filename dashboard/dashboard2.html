@@ -2147,18 +2147,16 @@ window.exportTable = async function(key) {
   // result set, not just the top 100 rows visible in the table.
   let data = cached;
   if (cached.baseQuery) {
-    const prevStatus = document.getElementById('status').textContent;
     setStatus('loading', 'Exporting full result set…');
     try {
       const fullRows = await q(cached.baseQuery);
       data = { ...cached, rows: fullRows };
+      setStatus('ready', 'Ready');
     } catch (err) {
       console.error('Export query failed:', err);
       setStatus('error', 'Export failed');
       alert('Export failed: ' + err.message);
       return;
-    } finally {
-      setStatus('ready', prevStatus === 'Exporting full result set…' ? 'Ready' : prevStatus);
     }
   }
 
