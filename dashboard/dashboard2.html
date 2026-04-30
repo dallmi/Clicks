@@ -952,7 +952,15 @@ function escSql(v) { return String(v).replace(/'/g, "''"); }
 
 async function q(sql) {
   const res = await conn.query(sql);
-  return res.toArray().map(r => Object.fromEntries(Object.entries(r)));
+  // Arrow rows expose values via Symbol-keyed getters that Object.entries
+  // can't see — DATE / TIMESTAMP values get dropped. Use the schema field
+  // names to extract every value explicitly.
+  const fields = res.schema.fields.map(f => f.name);
+  return res.toArray().map(row => {
+    const out = {};
+    for (const f of fields) out[f] = row[f];
+    return out;
+  });
 }
 
 // =====================================================================
@@ -1227,7 +1235,7 @@ async function resolveColumns() {
 }
 
 async function setInitialDateRange() {
-  const r = await q(`SELECT MIN(${columns.sessionDate}) AS mn, MAX(${columns.sessionDate}) AS mx FROM events`);
+  const r = await q(`SELECT CAST(MIN(${columns.sessionDate}) AS VARCHAR) AS mn, CAST(MAX(${columns.sessionDate}) AS VARCHAR) AS mx FROM events`);
   const row = r[0];
   if (row && row.mn != null) {
     dateFilter.from = new Date(row.mn);
@@ -2069,7 +2077,7 @@ function applyPreset(p) {
   document.querySelectorAll('.date-preset').forEach(b => b.classList.toggle('active', b.dataset.preset === p));
   if (p === 'all') {
     // already set on init; just re-read from inputs in case user cleared
-    q(`SELECT MIN(${columns.sessionDate}) AS mn, MAX(${columns.sessionDate}) AS mx FROM events`).then(r => {
+    q(`SELECT CAST(MIN(${columns.sessionDate}) AS VARCHAR) AS mn, CAST(MAX(${columns.sessionDate}) AS VARCHAR) AS mx FROM events`).then(r => {
       const row = r[0];
       if (row && row.mn != null) {
         dateFilter.from = new Date(row.mn);
