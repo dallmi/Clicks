@@ -1493,6 +1493,13 @@ async function renderLinksTable() {
       ? `COUNT(*) FILTER (WHERE ${columns.fileName} IS NOT NULL AND ${columns.fileName} <> '')`
       : `0`;
 
+  const fileNameExpr = columns.fileName
+    ? `MAX(CASE WHEN ${columns.fileName} IS NOT NULL AND ${columns.fileName} <> '' THEN ${columns.fileName} END)`
+    : `NULL`;
+  const fileTypeExpr = columns.fileType
+    ? `MAX(CASE WHEN ${columns.fileType} IS NOT NULL AND ${columns.fileType} <> '' THEN ${columns.fileType} END)`
+    : `NULL`;
+
   const sort = sortState.links;
   const baseQuery = `
     SELECT
@@ -1500,6 +1507,8 @@ async function renderLinksTable() {
       COALESCE(${pageCol}, '(unknown)') AS page_name,
       ${labelCol ? `COALESCE(${labelCol}, '(no label)')` : `'(no label)'`} AS link_title,
       COALESCE(${columns.linkAddress}, '') AS destination,
+      ${fileNameExpr} AS file_name,
+      ${fileTypeExpr} AS file_type,
       COUNT(*) AS total_clicks,
       COUNT(DISTINCT ${columns.gpn}) AS unique_clicks,
       ${dlExpr} AS downloads
@@ -1527,6 +1536,8 @@ async function renderLinksTable() {
           ${th('links', 'page_name', 'Page Name')}
           ${th('links', 'link_title', 'Link Label')}
           ${th('links', 'destination', 'Link Address')}
+          ${th('links', 'file_name', 'File Name')}
+          ${th('links', 'file_type', 'File Type')}
           ${th('links', 'total_clicks', 'Total Clicks', true)}
           ${th('links', 'unique_clicks', 'Unique Clicks', true)}
           ${th('links', 'downloads', 'Total Downloads', true)}
@@ -1539,6 +1550,8 @@ async function renderLinksTable() {
             <td>${escapeHtml(r.page_name)}</td>
             <td class="label" title="${escapeHtml(r.link_title)}">${escapeHtml(r.link_title)}</td>
             <td class="url"><a href="${escapeAttr(r.destination)}" target="_blank" rel="noopener" title="${escapeHtml(r.destination)}">${escapeHtml(r.destination)}</a></td>
+            <td class="label" title="${escapeHtml(r.file_name || '')}">${escapeHtml(r.file_name || '—')}</td>
+            <td>${escapeHtml(r.file_type || '—')}</td>
             <td class="num">${fmt(r.total_clicks)}</td>
             <td class="num">${fmt(r.unique_clicks)}</td>
             <td class="num">${fmt(r.downloads)}</td>
@@ -1547,7 +1560,7 @@ async function renderLinksTable() {
       </tbody>
       <tfoot>
         <tr>
-          <td colspan="4">Overall (filtered)</td>
+          <td colspan="6">Overall (filtered)</td>
           <td class="num">${fmt(totals.total_clicks)}</td>
           <td class="num">${fmt(totals.unique_clicks)}</td>
           <td class="num">${fmt(totals.downloads)}</td>
@@ -2171,11 +2184,11 @@ window.exportTable = async function(key) {
     },
     links: {
       sheet:   'Links',
-      headers: ['Page URL', 'Page Name', 'Link Label', 'Link Address', 'Total Clicks', 'Unique Clicks', 'Total Downloads'],
-      cols:    ['page_url', 'page_name', 'link_title', 'destination', 'total_clicks', 'unique_clicks', 'downloads'],
-      numIdx:  [4, 5, 6],
+      headers: ['Page URL', 'Page Name', 'Link Label', 'Link Address', 'File Name', 'File Type', 'Total Clicks', 'Unique Clicks', 'Total Downloads'],
+      cols:    ['page_url', 'page_name', 'link_title', 'destination', 'file_name', 'file_type', 'total_clicks', 'unique_clicks', 'downloads'],
+      numIdx:  [6, 7, 8],
       linkIdx: [0, 3],
-      totalsLabelSpan: 4,
+      totalsLabelSpan: 6,
     },
     audDownloads: {
       sheet:   'Top Downloads by Division',
