@@ -1491,7 +1491,6 @@ async function renderTrendChart() {
         data: clicks,
         borderColor: '#E60000',
         backgroundColor: 'rgba(230,0,0,0.08)',
-        yAxisID: 'y',
         tension: 0.25,
         pointRadius: rows.length > 60 ? 0 : 2,
         borderWidth: 2,
@@ -1502,7 +1501,6 @@ async function renderTrendChart() {
         data: downloads,
         borderColor: '#0C7EC6',
         backgroundColor: 'rgba(12,126,198,0.08)',
-        yAxisID: 'y2',
         tension: 0.25,
         pointRadius: rows.length > 60 ? 0 : 2,
         borderWidth: 2,
@@ -1526,14 +1524,9 @@ async function renderTrendChart() {
     },
     scales: {
       x: { ticks: { autoSkip: true, maxRotation: 0, font: { size: 10 } }, grid: { color: '#ECEBE4' } },
-      y:  { type: 'linear', position: 'left',
-            ticks: { callback: v => Number(v).toLocaleString('en-US'), font: { size: 10 } },
-            grid: { color: '#ECEBE4' },
-            title: { display: true, text: 'Clicks', font: { size: 10 } } },
-      y2: { type: 'linear', position: 'right',
-            ticks: { callback: v => Number(v).toLocaleString('en-US'), font: { size: 10 } },
-            grid: { drawOnChartArea: false },
-            title: { display: true, text: 'Downloads', font: { size: 10 } } },
+      y: { type: 'linear', position: 'left', beginAtZero: true,
+           ticks: { callback: v => Number(v).toLocaleString('en-US'), font: { size: 10 } },
+           grid: { color: '#ECEBE4' } },
     },
   };
 
