@@ -7,6 +7,7 @@
 <title>Click-Tracking Dashboard</title>
 
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script type="module">
   import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.28.0/+esm';
   window.duckdb = duckdb;
@@ -492,6 +493,14 @@ tfoot td {
 .tab-pane { display: none; }
 .tab-pane.active { display: block; }
 
+/* ---- Trend chart ---- */
+.chart-wrap {
+  padding: 0.85rem 0.85rem 0.5rem;
+  height: 280px;
+  position: relative;
+}
+.chart-wrap canvas { max-height: 100%; }
+
 /* ---- Audience Tab ---- */
 .aud-kpi-strip {
   display: grid;
@@ -763,6 +772,16 @@ table.heatmap td.cell { font-variant-numeric: tabular-nums; font-weight: 500; }
     <!-- TAB 1 — Pages & Links -->
     <div class="tab-pane active" id="tabPagesLinks">
       <div class="kpi-strip" id="kpiStrip"></div>
+
+      <div class="section">
+        <div class="section-head">
+          <div class="section-title">Trend over Time</div>
+          <div class="section-actions">
+            <span class="section-meta" id="trendMeta"></span>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+      </div>
 
       <div class="section">
         <div class="section-head">
@@ -1346,7 +1365,7 @@ async function renderAll() {
   setStatus('loading', 'Querying…');
   try {
     if (activeTab === 'tabPagesLinks') {
-      await Promise.all([renderKPIs(), renderPagesTable(), renderLinksTable()]);
+      await Promise.all([renderKPIs(), renderTrendChart(), renderPagesTable(), renderLinksTable()]);
       pagesLinksDirty = false;
       audienceDirty = true;
     } else if (activeTab === 'tabAudience') {
@@ -1373,7 +1392,7 @@ window.switchTab = function(tabId) {
       .catch(err => { console.error(err); setStatus('error', err.message); });
   } else if (tabId === 'tabPagesLinks' && pagesLinksDirty) {
     setStatus('loading', 'Querying…');
-    Promise.all([renderKPIs(), renderPagesTable(), renderLinksTable()])
+    Promise.all([renderKPIs(), renderTrendChart(), renderPagesTable(), renderLinksTable()])
       .then(() => { pagesLinksDirty = false; setStatus('ready', getRefreshLabel()); })
       .catch(err => { console.error(err); setStatus('error', err.message); });
   }
@@ -1426,6 +1445,105 @@ async function renderKPIs() {
     card('info',    'Distinct Clickers',       r.distinct_clickers, 'distinct GPNs with ≥1 click'),
     card('warning', 'Total Downloads',         r.downloads,        'events with file type')
   ].join('');
+}
+
+let trendChartInstance = null;
+
+async function renderTrendChart() {
+  const canvas = document.getElementById('trendChart');
+  if (!canvas || typeof Chart === 'undefined') return;
+
+  const w = whereClause();
+  const dlExpr = columns.fileType
+    ? `COUNT(*) FILTER (WHERE ${columns.fileType} IS NOT NULL AND ${columns.fileType} <> '')`
+    : columns.fileName
+      ? `COUNT(*) FILTER (WHERE ${columns.fileName} IS NOT NULL AND ${columns.fileName} <> '')`
+      : `0`;
+
+  // Auto-pick bucket based on selected range
+  const days = (dateFilter.from && dateFilter.to)
+    ? Math.max(1, Math.round((dateFilter.to - dateFilter.from) / 86400000))
+    : 90;
+  const bucket = days <= 35 ? 'day' : days <= 365 ? 'week' : 'month';
+
+  const rows = await q(`
+    SELECT
+      CAST(DATE_TRUNC('${bucket}', ${columns.sessionDate}) AS VARCHAR) AS bucket,
+      COUNT(*)        AS clicks,
+      ${dlExpr}       AS downloads
+    FROM events ${w}
+    GROUP BY 1
+    ORDER BY 1
+  `);
+
+  document.getElementById('trendMeta').textContent =
+    rows.length ? `${rows.length} ${bucket}${rows.length > 1 ? 's' : ''}` : 'no data';
+
+  const labels    = rows.map(r => r.bucket);
+  const clicks    = rows.map(r => Number(r.clicks));
+  const downloads = rows.map(r => Number(r.downloads));
+
+  const data = {
+    labels,
+    datasets: [
+      {
+        label: 'Total Clicks',
+        data: clicks,
+        borderColor: '#E60000',
+        backgroundColor: 'rgba(230,0,0,0.08)',
+        yAxisID: 'y',
+        tension: 0.25,
+        pointRadius: rows.length > 60 ? 0 : 2,
+        borderWidth: 2,
+        fill: true,
+      },
+      {
+        label: 'Total Downloads',
+        data: downloads,
+        borderColor: '#0C7EC6',
+        backgroundColor: 'rgba(12,126,198,0.08)',
+        yAxisID: 'y2',
+        tension: 0.25,
+        pointRadius: rows.length > 60 ? 0 : 2,
+        borderWidth: 2,
+        fill: false,
+      },
+    ],
+  };
+
+  const options = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { position: 'top', align: 'end', labels: { boxWidth: 10, boxHeight: 10, font: { size: 11 } } },
+      tooltip: {
+        callbacks: {
+          title: items => items[0]?.label,
+          label:  ctx => `${ctx.dataset.label}: ${Number(ctx.parsed.y).toLocaleString('en-US')}`,
+        },
+      },
+    },
+    scales: {
+      x: { ticks: { autoSkip: true, maxRotation: 0, font: { size: 10 } }, grid: { color: '#ECEBE4' } },
+      y:  { type: 'linear', position: 'left',
+            ticks: { callback: v => Number(v).toLocaleString('en-US'), font: { size: 10 } },
+            grid: { color: '#ECEBE4' },
+            title: { display: true, text: 'Clicks', font: { size: 10 } } },
+      y2: { type: 'linear', position: 'right',
+            ticks: { callback: v => Number(v).toLocaleString('en-US'), font: { size: 10 } },
+            grid: { drawOnChartArea: false },
+            title: { display: true, text: 'Downloads', font: { size: 10 } } },
+    },
+  };
+
+  if (trendChartInstance) {
+    trendChartInstance.data = data;
+    trendChartInstance.options = options;
+    trendChartInstance.update('none');
+  } else {
+    trendChartInstance = new Chart(canvas.getContext('2d'), { type: 'line', data, options });
+  }
 }
 
 async function renderPagesTable() {
