@@ -394,14 +394,28 @@ thead th {
   border-bottom: 1px solid var(--light-gray);
   cursor: pointer;
   user-select: none;
+  position: sticky;
 }
 thead th:hover { background: var(--light-gray); }
-thead th.sorted::after {
+thead th.sorted .th-label::after {
   content: ' ▾';
   font-size: 0.65rem;
   color: var(--primary);
 }
-thead th.sorted.asc::after { content: ' ▴'; }
+thead th.sorted.asc .th-label::after { content: ' ▴'; }
+.th-label { display: inline-block; pointer-events: none; }
+.col-resize {
+  position: absolute;
+  top: 0; right: 0;
+  width: 6px; height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  background: transparent;
+  transition: background 0.1s;
+}
+.col-resize:hover, .col-resize.active { background: var(--primary); opacity: 0.5; }
+thead th { position: sticky; }
+thead th:has(.col-resize) { padding-right: 0.85rem; }
 tbody tr:nth-child(even) { background: var(--row-alt); }
 tbody tr:hover { background: var(--surface); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -722,6 +736,10 @@ table.heatmap td.cell { font-variant-numeric: tabular-nums; font-weight: 500; }
     <div class="filter-group">
       <label>Target Region</label>
       <div class="multi-select" id="ms_filterRegion"></div>
+    </div>
+    <div class="filter-group">
+      <label>File Name</label>
+      <div class="multi-select" id="ms_filterFile"></div>
     </div>
   </div>
 </div>
@@ -1267,8 +1285,9 @@ async function populateFilterDatalists() {
   multiSelects.theme  = new MultiSelect('ms_filterTheme',  { placeholder: 'All themes',         onChange: debounceRender });
   multiSelects.org    = new MultiSelect('ms_filterOrg',    { placeholder: 'All target orgs',    onChange: debounceRender });
   multiSelects.region = new MultiSelect('ms_filterRegion', { placeholder: 'All target regions', onChange: debounceRender });
+  multiSelects.file   = new MultiSelect('ms_filterFile',   { placeholder: 'All files',          onChange: debounceRender });
 
-  const [siteVals, pageVals, linkVals, topicVals, themeVals, orgVals, regionVals] = await Promise.all([
+  const [siteVals, pageVals, linkVals, topicVals, themeVals, orgVals, regionVals, fileVals] = await Promise.all([
     loadDistinctValues(columns.site,         2000),
     loadDistinctValues(columns.pageName,    10000),
     loadDistinctValues(columns.linkLabel,   10000),
@@ -1276,6 +1295,7 @@ async function populateFilterDatalists() {
     loadDistinctValues(columns.theme,         100),
     loadDistinctValues(columns.targetOrg,    2000),
     loadDistinctValues(columns.targetRegion,  500),
+    loadDistinctValues(columns.fileName,    10000),
   ]);
   multiSelects.site.setOptions(siteVals);
   multiSelects.page.setOptions(pageVals);
@@ -1284,6 +1304,7 @@ async function populateFilterDatalists() {
   multiSelects.theme.setOptions(themeVals);
   multiSelects.org.setOptions(orgVals);
   multiSelects.region.setOptions(regionVals);
+  multiSelects.file.setOptions(fileVals);
 }
 
 // =====================================================================
@@ -1308,6 +1329,7 @@ function getFilterClauses() {
   w += inClause(columns.theme,        ms('theme'));
   w += inClause(columns.targetOrg,    ms('org'));
   w += inClause(columns.targetRegion, ms('region'));
+  w += inClause(columns.fileName,     ms('file'));
   return w;
 }
 
@@ -1572,8 +1594,34 @@ async function renderLinksTable() {
 function th(table, col, label, isNum) {
   const s = sortState[table];
   const cls = (s.col === col ? 'sorted ' + s.dir : '') + (isNum ? ' num' : '');
-  return `<th class="${cls}" onclick="sortBy('${table}','${col}')">${label}</th>`;
+  return `<th class="${cls}" onclick="sortBy('${table}','${col}')"><span class="th-label">${label}</span><span class="col-resize" onmousedown="startColResize(event)"></span></th>`;
 }
+
+window.startColResize = function(e) {
+  e.stopPropagation();
+  e.preventDefault();
+  const handle = e.currentTarget;
+  const th = handle.closest('th');
+  if (!th) return;
+  const startX = e.clientX;
+  const startW = th.offsetWidth;
+  handle.classList.add('active');
+  document.body.style.cursor = 'col-resize';
+  function onMove(ev) {
+    const w = Math.max(50, startW + (ev.clientX - startX));
+    th.style.width    = w + 'px';
+    th.style.minWidth = w + 'px';
+    th.style.maxWidth = w + 'px';
+  }
+  function onUp() {
+    handle.classList.remove('active');
+    document.body.style.cursor = '';
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+};
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
