@@ -427,6 +427,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--external", action="store_true",
                         help="Use an external Postgres instead of the embedded server.")
+    parser.add_argument("--start", action="store_true",
+                        help="Just start the embedded Postgres server (no data migration) and exit.")
     parser.add_argument("--stop", action="store_true",
                         help="Stop the embedded Postgres server and exit.")
     parser.add_argument("--status", action="store_true",
@@ -447,6 +449,10 @@ def main() -> int:
         return stop_embedded_postgres()
     if args.status:
         return status_embedded_postgres()
+    if args.start:
+        start_embedded_postgres(args)
+        _print_connection_banner(args)
+        return 0
 
     if not DUCKDB_PATH.exists():
         log(f"ERROR: {DUCKDB_PATH} not found")
@@ -485,21 +491,26 @@ def main() -> int:
     log("Done.")
 
     if server is not None:
-        print()
-        print("=" * 70)
-        print("  Embedded Postgres is running. Connect pgAdmin with:")
-        print(f"    Host:     {args.host}")
-        print(f"    Port:     {args.port}")
-        print(f"    Database: {args.dbname}")
-        print(f"    User:     {args.user}")
-        print(f"    Password: {args.password or '(none — leave blank)'}")
-        print()
-        print(f"  Data directory: {EMBEDDED_PGDATA}")
-        print()
-        print("  Stop server:    python scripts\\duckdb_to_postgres.py --stop")
-        print("  Server status:  python scripts\\duckdb_to_postgres.py --status")
-        print("=" * 70)
+        _print_connection_banner(args)
     return 0
+
+
+def _print_connection_banner(args) -> None:
+    print()
+    print("=" * 70)
+    print("  Embedded Postgres is running. Connect pgAdmin with:")
+    print(f"    Host:     {args.host}")
+    print(f"    Port:     {args.port}")
+    print(f"    Database: {args.dbname}")
+    print(f"    User:     {args.user}")
+    print(f"    Password: {args.password or '(none — leave blank)'}")
+    print()
+    print(f"  Data directory: {EMBEDDED_PGDATA}")
+    print()
+    print("  Start server:   python scripts\\duckdb_to_postgres.py --start")
+    print("  Stop server:    python scripts\\duckdb_to_postgres.py --stop")
+    print("  Server status:  python scripts\\duckdb_to_postgres.py --status")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
