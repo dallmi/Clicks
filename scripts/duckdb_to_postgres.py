@@ -1,0 +1,502 @@
+"""
+Migrates the Clicks DuckDB + CDM parquet star-schema into a Postgres database.
+
+Output schema (default: "clicks"):
+
+  Dimensions (PK = *_key):
+    dim_date, dim_organization, dim_site, dim_page, dim_link_type,
+    dim_component, dim_topic, dim_theme, dim_target_org, dim_target_region
+
+  Fact:
+    fact_clicks (FKs to all dims, plus a synthetic BIGSERIAL PK)
+
+  Convenience:
+    events_flat  -- the fully-enriched flat table from data/clicks.db (events)
+
+Usage (default: fully embedded — no Postgres install needed):
+  python scripts/duckdb_to_postgres.py
+  python scripts/duckdb_to_postgres.py --drop
+
+The script will:
+  - auto-install missing pip dependencies (duckdb, psycopg[binary], pgserver)
+  - launch an embedded Postgres server in data/postgres/ (binaries are
+    downloaded by pgserver into the user cache on first run; no admin rights)
+  - CREATE DATABASE if it doesn't exist
+  - CREATE SCHEMA, all tables, PKs, FKs and indexes
+  - bulk-load all data via COPY
+  - leave the server running and print the connection URI for pgAdmin
+
+To use an existing external Postgres instead:
+  python scripts/duckdb_to_postgres.py --external
+  PG* env vars (PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE) are respected.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def _ensure_dependencies(extra: list[tuple[str, str]] | None = None) -> None:
+    """Install missing pip packages so the user only needs to run the script."""
+    required = [("duckdb", "duckdb"), ("psycopg", "psycopg[binary]")]
+    if extra:
+        required.extend(extra)
+    missing = []
+    for module, pip_name in required:
+        try:
+            __import__(module)
+        except ImportError:
+            missing.append(pip_name)
+    if missing:
+        print(f"[migrate] Installing missing dependencies: {', '.join(missing)}", flush=True)
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", *missing])
+
+
+# Embedded mode is the default — install pgserver too unless the user opted out.
+_EMBEDDED = "--external" not in sys.argv
+_ensure_dependencies(extra=[("pgserver", "pgserver")] if _EMBEDDED else None)
+
+import duckdb  # noqa: E402
+import psycopg  # noqa: E402
+from psycopg import sql  # noqa: E402
+
+ROOT = Path(__file__).resolve().parent.parent
+DUCKDB_PATH = ROOT / "data" / "clicks.db"
+CDM_DIR = ROOT / "output" / "cdm"
+EMBEDDED_PGDATA = ROOT / "data" / "postgres"
+
+DIMENSIONS = [
+    # (parquet_name, table_name, pk_column, columns_ddl)
+    ("dim_date", "dim_date", "date_key", """
+        date_key      INTEGER PRIMARY KEY,
+        date_value    DATE NOT NULL,
+        year          INTEGER,
+        quarter       INTEGER,
+        month         INTEGER,
+        month_name    TEXT,
+        week          INTEGER,
+        day_of_week   INTEGER,
+        day_name      TEXT,
+        is_weekend    BOOLEAN
+    """),
+    ("dim_organization", "dim_organization", "org_key", """
+        org_key          INTEGER PRIMARY KEY,
+        org_hash         TEXT,
+        division         TEXT,
+        unit             TEXT,
+        area             TEXT,
+        sector           TEXT,
+        segment          TEXT,
+        function         TEXT,
+        ou_code          TEXT,
+        country          TEXT,
+        region           TEXT,
+        job_title        TEXT,
+        job_family       TEXT,
+        management_level TEXT,
+        cost_center      TEXT
+    """),
+    ("dim_site", "dim_site", "site_key", """
+        site_key  INTEGER PRIMARY KEY,
+        site_id   TEXT,
+        site_name TEXT
+    """),
+    ("dim_page", "dim_page", "page_key", """
+        page_key     INTEGER PRIMARY KEY,
+        page_id      TEXT,
+        page_name    TEXT,
+        page_url     TEXT,
+        content_type TEXT,
+        page_status  TEXT
+    """),
+    ("dim_link_type", "dim_link_type", "link_type_key", """
+        link_type_key INTEGER PRIMARY KEY,
+        link_type     TEXT
+    """),
+    ("dim_component", "dim_component", "component_key", """
+        component_key  INTEGER PRIMARY KEY,
+        component_name TEXT
+    """),
+    ("dim_topic", "dim_topic", "topic_key", """
+        topic_key INTEGER PRIMARY KEY,
+        topic     TEXT
+    """),
+    ("dim_theme", "dim_theme", "theme_key", """
+        theme_key INTEGER PRIMARY KEY,
+        theme     TEXT
+    """),
+    ("dim_target_org", "dim_target_org", "target_org_key", """
+        target_org_key INTEGER PRIMARY KEY,
+        target_org     TEXT
+    """),
+    ("dim_target_region", "dim_target_region", "target_region_key", """
+        target_region_key INTEGER PRIMARY KEY,
+        target_region     TEXT
+    """),
+]
+
+FACT_DDL = """
+    fact_id                 BIGSERIAL PRIMARY KEY,
+    date_key                INTEGER NOT NULL REFERENCES {schema}.dim_date(date_key),
+    org_key                 INTEGER REFERENCES {schema}.dim_organization(org_key),
+    site_key                INTEGER REFERENCES {schema}.dim_site(site_key),
+    page_key                INTEGER REFERENCES {schema}.dim_page(page_key),
+    link_type_key           INTEGER REFERENCES {schema}.dim_link_type(link_type_key),
+    component_key           INTEGER REFERENCES {schema}.dim_component(component_key),
+    topic_key               INTEGER REFERENCES {schema}.dim_topic(topic_key),
+    theme_key               INTEGER REFERENCES {schema}.dim_theme(theme_key),
+    target_org_key          INTEGER REFERENCES {schema}.dim_target_org(target_org_key),
+    target_region_key       INTEGER REFERENCES {schema}.dim_target_region(target_region_key),
+    person_hash             TEXT,
+    user_id                 TEXT,
+    session_id              TEXT,
+    session_key             TEXT,
+    "timestamp"             TIMESTAMP,
+    timestamp_cet           TIMESTAMP,
+    event_order             INTEGER,
+    prev_event              TEXT,
+    ms_since_prev_event     BIGINT,
+    sec_since_prev_event    DOUBLE PRECISION,
+    time_since_prev_bucket  TEXT,
+    event_hour              INTEGER,
+    event_weekday           TEXT,
+    link_address            TEXT,
+    link_label              TEXT,
+    file_name               TEXT,
+    file_type               TEXT,
+    event_name              TEXT,
+    client_country          TEXT
+"""
+
+FACT_COLUMNS = [
+    "date_key", "org_key", "site_key", "page_key", "link_type_key",
+    "component_key", "topic_key", "theme_key", "target_org_key", "target_region_key",
+    "person_hash", "user_id", "session_id", "session_key",
+    "timestamp", "timestamp_cet", "event_order", "prev_event",
+    "ms_since_prev_event", "sec_since_prev_event", "time_since_prev_bucket",
+    "event_hour", "event_weekday", "link_address", "link_label",
+    "file_name", "file_type", "event_name", "client_country",
+]
+
+FACT_INDEXES = [
+    ("ix_fact_clicks_date",       "(date_key)"),
+    ("ix_fact_clicks_page",       "(page_key)"),
+    ("ix_fact_clicks_org",        "(org_key)"),
+    ("ix_fact_clicks_person",     "(person_hash)"),
+    ("ix_fact_clicks_session",    "(session_key)"),
+    ("ix_fact_clicks_timestamp",  "(\"timestamp\")"),
+]
+
+
+def log(msg: str) -> None:
+    print(f"[migrate] {msg}", flush=True)
+
+
+def get_pg_conn(args, dbname: str | None = None, autocommit: bool = False) -> psycopg.Connection:
+    return psycopg.connect(
+        host=args.host,
+        port=args.port,
+        user=args.user,
+        password=args.password,
+        dbname=dbname or args.dbname,
+        autocommit=autocommit,
+    )
+
+
+def ensure_database(args) -> None:
+    """Create the target Postgres database if it does not yet exist.
+
+    CREATE DATABASE cannot run inside a transaction, so we connect to the
+    server-level 'postgres' database with autocommit=True.
+    """
+    with get_pg_conn(args, dbname="postgres", autocommit=True) as pg, pg.cursor() as cur:
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (args.dbname,))
+        if cur.fetchone():
+            log(f"Database '{args.dbname}' already exists")
+            return
+        log(f"CREATE DATABASE {args.dbname}")
+        cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(args.dbname)))
+
+
+def reset_schema(cur, schema: str, drop: bool) -> None:
+    if drop:
+        log(f"DROP SCHEMA {schema} CASCADE")
+        cur.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+    log(f"CREATE SCHEMA {schema}")
+    cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema)))
+
+
+def create_dimension_tables(cur, schema: str) -> None:
+    for _, table, _, ddl in DIMENSIONS:
+        log(f"CREATE TABLE {schema}.{table}")
+        cur.execute(sql.SQL("CREATE TABLE {}.{} ({})").format(
+            sql.Identifier(schema),
+            sql.Identifier(table),
+            sql.SQL(ddl),
+        ))
+
+
+def create_fact_table(cur, schema: str) -> None:
+    log(f"CREATE TABLE {schema}.fact_clicks")
+    cur.execute(sql.SQL("CREATE TABLE {}.fact_clicks ({})").format(
+        sql.Identifier(schema),
+        sql.SQL(FACT_DDL.format(schema=schema)),
+    ))
+    for ix_name, expr in FACT_INDEXES:
+        cur.execute(sql.SQL("CREATE INDEX {} ON {}.fact_clicks {}").format(
+            sql.Identifier(ix_name),
+            sql.Identifier(schema),
+            sql.SQL(expr),
+        ))
+
+
+def copy_arrow_to_postgres(
+    cur,
+    schema: str,
+    table: str,
+    columns: list[str],
+    rows_iter,
+) -> int:
+    """Stream rows into Postgres using COPY ... FROM STDIN (binary-safe via text mode)."""
+    cols_sql = sql.SQL(", ").join(sql.Identifier(c) for c in columns)
+    copy_sql = sql.SQL("COPY {}.{} ({}) FROM STDIN").format(
+        sql.Identifier(schema),
+        sql.Identifier(table),
+        cols_sql,
+    )
+    n = 0
+    with cur.copy(copy_sql) as copy:
+        for row in rows_iter:
+            copy.write_row(row)
+            n += 1
+    return n
+
+
+def load_dimensions(duck: duckdb.DuckDBPyConnection, cur, schema: str) -> None:
+    for parquet_name, table, _, _ in DIMENSIONS:
+        path = CDM_DIR / f"{parquet_name}.parquet"
+        if not path.exists():
+            log(f"SKIP {table} (missing {path.name})")
+            continue
+        # Get column order from Postgres table to match parquet to columns
+        cur.execute(sql.SQL("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = %s
+            ORDER BY ordinal_position
+        """), (schema, table))
+        cols = [r[0] for r in cur.fetchall()]
+        rows = duck.execute(
+            f"SELECT {', '.join(cols)} FROM read_parquet(?)", [str(path)]
+        ).fetchall()
+        n = copy_arrow_to_postgres(cur, schema, table, cols, rows)
+        log(f"  loaded {n:,} rows into {schema}.{table}")
+
+
+def load_fact(duck: duckdb.DuckDBPyConnection, cur, schema: str) -> None:
+    path = CDM_DIR / "fact_clicks.parquet"
+    if not path.exists():
+        log(f"SKIP fact_clicks (missing {path.name})")
+        return
+    quoted = ", ".join(f'"{c}"' for c in FACT_COLUMNS)
+    rows = duck.execute(
+        f"SELECT {quoted} FROM read_parquet(?)", [str(path)]
+    ).fetchall()
+    n = copy_arrow_to_postgres(cur, schema, "fact_clicks", FACT_COLUMNS, rows)
+    log(f"  loaded {n:,} rows into {schema}.fact_clicks")
+
+
+def load_events_flat(duck: duckdb.DuckDBPyConnection, cur, schema: str) -> None:
+    """Mirror the enriched DuckDB `events` table into Postgres for ad-hoc analysis."""
+    log("Building events_flat from data/clicks.db")
+    cols_info = duck.execute("DESCRIBE events").fetchall()
+    type_map = {
+        "TIMESTAMP": "TIMESTAMP",
+        "TIMESTAMP_NS": "TIMESTAMP",
+        "TIMESTAMP WITH TIME ZONE": "TIMESTAMPTZ",
+        "DATE": "DATE",
+        "BIGINT": "BIGINT",
+        "INTEGER": "INTEGER",
+        "DOUBLE": "DOUBLE PRECISION",
+        "BOOLEAN": "BOOLEAN",
+        "VARCHAR": "TEXT",
+    }
+    ddl_cols = []
+    col_names = []
+    for col_name, col_type, *_ in cols_info:
+        pg_type = type_map.get(col_type.upper(), "TEXT")
+        ddl_cols.append(f'"{col_name}" {pg_type}')
+        col_names.append(col_name)
+
+    cur.execute(sql.SQL("CREATE TABLE {}.events_flat ({})").format(
+        sql.Identifier(schema),
+        sql.SQL(", ".join(ddl_cols)),
+    ))
+    # Useful indexes for the flat table
+    cur.execute(sql.SQL(
+        'CREATE INDEX ix_events_flat_session_date ON {}.events_flat (session_date)'
+    ).format(sql.Identifier(schema)))
+    cur.execute(sql.SQL(
+        'CREATE INDEX ix_events_flat_gpn ON {}.events_flat (gpn)'
+    ).format(sql.Identifier(schema)))
+
+    rows = duck.execute(
+        f"SELECT {', '.join(f'\"{c}\"' for c in col_names)} FROM events"
+    ).fetchall()
+    n = copy_arrow_to_postgres(cur, schema, "events_flat", col_names, rows)
+    log(f"  loaded {n:,} rows into {schema}.events_flat")
+
+
+def _read_postmaster_pid() -> int | None:
+    pid_file = EMBEDDED_PGDATA / "postmaster.pid"
+    if not pid_file.exists():
+        return None
+    try:
+        first = pid_file.read_text().splitlines()[0].strip()
+        return int(first)
+    except (ValueError, IndexError):
+        return None
+
+
+def stop_embedded_postgres() -> int:
+    """Stop the embedded Postgres server (kill postmaster from postmaster.pid)."""
+    if not EMBEDDED_PGDATA.exists():
+        log(f"No embedded Postgres data directory at {EMBEDDED_PGDATA}")
+        return 0
+    pid = _read_postmaster_pid()
+    if pid is None:
+        log("Embedded Postgres is not running (no postmaster.pid)")
+        return 0
+    log(f"Stopping embedded Postgres (pid {pid})")
+    try:
+        import pgserver  # type: ignore
+        pgserver.get_server(str(EMBEDDED_PGDATA), cleanup_mode=None).cleanup()
+        log("Stopped.")
+        return 0
+    except Exception as e:
+        log(f"pgserver cleanup failed ({e}); falling back to OS signal")
+        import signal
+        try:
+            os.kill(pid, signal.SIGTERM)
+            log(f"Sent SIGTERM to pid {pid}")
+            return 0
+        except ProcessLookupError:
+            log("Process already gone")
+            return 0
+        except Exception as e2:
+            log(f"ERROR: could not stop server: {e2}")
+            return 1
+
+
+def status_embedded_postgres() -> int:
+    pid = _read_postmaster_pid()
+    if pid is None:
+        log("Embedded Postgres: NOT running")
+        return 0
+    log(f"Embedded Postgres: running (pid {pid}, data dir {EMBEDDED_PGDATA})")
+    return 0
+
+
+def start_embedded_postgres(args) -> "object":
+    """Launch a local embedded Postgres via pgserver and patch args with its URI."""
+    import pgserver  # type: ignore
+    from urllib.parse import urlparse, unquote
+
+    EMBEDDED_PGDATA.mkdir(parents=True, exist_ok=True)
+    log(f"Starting embedded Postgres in {EMBEDDED_PGDATA}")
+    log("(first run downloads ~50MB of Postgres binaries into the user cache)")
+    # cleanup_mode=None -> server stays running after Python exits, so pgAdmin
+    # can connect to it.
+    server = pgserver.get_server(str(EMBEDDED_PGDATA), cleanup_mode=None)
+
+    uri = server.get_uri()
+    parsed = urlparse(uri)
+    args.host = parsed.hostname or "localhost"
+    args.port = parsed.port or 5432
+    args.user = unquote(parsed.username) if parsed.username else "postgres"
+    args.password = unquote(parsed.password) if parsed.password else ""
+    log(f"Embedded Postgres ready at {args.host}:{args.port} (user={args.user})")
+    return server
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--external", action="store_true",
+                        help="Use an external Postgres instead of the embedded server.")
+    parser.add_argument("--stop", action="store_true",
+                        help="Stop the embedded Postgres server and exit.")
+    parser.add_argument("--status", action="store_true",
+                        help="Show whether the embedded Postgres server is running and exit.")
+    parser.add_argument("--host", default=os.environ.get("PGHOST", "localhost"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PGPORT", "5432")))
+    parser.add_argument("--user", default=os.environ.get("PGUSER", "postgres"))
+    parser.add_argument("--password", default=os.environ.get("PGPASSWORD", "postgres"))
+    parser.add_argument("--dbname", default=os.environ.get("PGDATABASE", "clicks"))
+    parser.add_argument("--schema", default="clicks")
+    parser.add_argument("--drop", action="store_true",
+                        help="Drop and recreate the target schema (data loss).")
+    parser.add_argument("--skip-flat", action="store_true",
+                        help="Skip the events_flat table (CDM only).")
+    args = parser.parse_args()
+
+    if args.stop:
+        return stop_embedded_postgres()
+    if args.status:
+        return status_embedded_postgres()
+
+    if not DUCKDB_PATH.exists():
+        log(f"ERROR: {DUCKDB_PATH} not found")
+        return 1
+    if not CDM_DIR.exists():
+        log(f"ERROR: {CDM_DIR} not found — run scripts/process_clicks.py first")
+        return 1
+
+    log(f"Source DuckDB: {DUCKDB_PATH}")
+    log(f"Source CDM:    {CDM_DIR}")
+
+    server = None
+    if not args.external:
+        server = start_embedded_postgres(args)
+
+    log(f"Target Postgres: {args.user}@{args.host}:{args.port}/{args.dbname} schema={args.schema}")
+
+    ensure_database(args)
+
+    duck = duckdb.connect(str(DUCKDB_PATH), read_only=True)
+    with get_pg_conn(args) as pg, pg.cursor() as cur:
+        reset_schema(cur, args.schema, args.drop)
+        create_dimension_tables(cur, args.schema)
+        create_fact_table(cur, args.schema)
+        load_dimensions(duck, cur, args.schema)
+        load_fact(duck, cur, args.schema)
+        if not args.skip_flat:
+            load_events_flat(duck, cur, args.schema)
+        log("ANALYZE")
+        cur.execute(sql.SQL("ANALYZE"))
+        pg.commit()
+
+    log("Done.")
+
+    if server is not None:
+        print()
+        print("=" * 70)
+        print("  Embedded Postgres is running. Connect pgAdmin with:")
+        print(f"    Host:     {args.host}")
+        print(f"    Port:     {args.port}")
+        print(f"    Database: {args.dbname}")
+        print(f"    User:     {args.user}")
+        print(f"    Password: {args.password or '(none — leave blank)'}")
+        print()
+        print(f"  Data directory: {EMBEDDED_PGDATA}")
+        print()
+        print("  Stop server:    python scripts\\duckdb_to_postgres.py --stop")
+        print("  Server status:  python scripts\\duckdb_to_postgres.py --status")
+        print("=" * 70)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
