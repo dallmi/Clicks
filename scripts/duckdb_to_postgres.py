@@ -68,6 +68,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DUCKDB_PATH = ROOT / "data" / "clicks.db"
 CDM_DIR = ROOT / "output" / "cdm"
 EMBEDDED_PGDATA = ROOT / "data" / "postgres"
+VIEWS_SQL = Path(__file__).resolve().parent / "analytics_views.sql"
 
 DIMENSIONS = [
     # (parquet_name, table_name, pk_column, columns_ddl)
@@ -474,6 +475,9 @@ def main() -> int:
         load_fact(duck, cur, args.schema)
         if not args.skip_flat:
             load_events_flat(duck, cur, args.schema)
+        if VIEWS_SQL.exists():
+            log(f"Creating analytics views from {VIEWS_SQL.name}")
+            cur.execute(VIEWS_SQL.read_text(encoding="utf-8"))
         log("ANALYZE")
         cur.execute(sql.SQL("ANALYZE"))
         pg.commit()
