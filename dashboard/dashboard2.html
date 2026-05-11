@@ -2363,6 +2363,9 @@ window.exportTable = async function(key) {
     setStatus('loading', 'Exporting full result set…');
     try {
       const fullRows = await q(cached.baseQuery);
+      if (key === 'links') {
+        for (const r of fullRows) r.destination_normalized = normalizeSpUrl(r.destination);
+      }
       data = { ...cached, rows: fullRows };
       setStatus('ready', 'Ready');
     } catch (err) {
