@@ -1634,6 +1634,8 @@ async function renderLinksTable() {
     : `NULL`;
 
   const sort = sortState.links;
+  // destination_normalized is computed in JS; sort by underlying column.
+  const sortCol = sort.col === 'destination_normalized' ? 'destination' : sort.col;
   const baseQuery = `
     SELECT
       COALESCE(${urlCol},  '')          AS page_url,
@@ -1647,8 +1649,9 @@ async function renderLinksTable() {
       ${dlExpr} AS downloads
     FROM events ${w}
     GROUP BY 1, 2, 3, 4
-    ORDER BY ${sort.col} ${sort.dir.toUpperCase()}`;
+    ORDER BY ${sortCol} ${sort.dir.toUpperCase()}`;
   const rows = await q(`${baseQuery} LIMIT ${TABLE_LIMIT}`);
+  for (const r of rows) r.destination_normalized = normalizeSpUrl(r.destination);
 
   const totals = (await q(`
     SELECT
@@ -1669,6 +1672,7 @@ async function renderLinksTable() {
           ${th('links', 'page_name', 'Page Name')}
           ${th('links', 'link_title', 'Link Label')}
           ${th('links', 'destination', 'Link Address')}
+          ${th('links', 'destination_normalized', 'Normalized Link')}
           ${th('links', 'file_name', 'File Name')}
           ${th('links', 'file_type', 'File Type')}
           ${th('links', 'total_clicks', 'Total Clicks', true)}
@@ -1683,6 +1687,7 @@ async function renderLinksTable() {
             <td>${escapeHtml(r.page_name)}</td>
             <td class="label" title="${escapeHtml(r.link_title)}">${escapeHtml(r.link_title)}</td>
             <td class="url"><a href="${escapeAttr(r.destination)}" target="_blank" rel="noopener" title="${escapeHtml(r.destination)}">${escapeHtml(r.destination)}</a></td>
+            <td class="url" title="${escapeHtml(r.destination_normalized)}">${escapeHtml(r.destination_normalized)}</td>
             <td class="label" title="${escapeHtml(r.file_name || '')}">${escapeHtml(r.file_name || '—')}</td>
             <td>${escapeHtml(r.file_type || '—')}</td>
             <td class="num">${fmt(r.total_clicks)}</td>
@@ -1693,7 +1698,7 @@ async function renderLinksTable() {
       </tbody>
       <tfoot>
         <tr>
-          <td colspan="6">Overall (filtered)</td>
+          <td colspan="7">Overall (filtered)</td>
           <td class="num">${fmt(totals.total_clicks)}</td>
           <td class="num">${fmt(totals.unique_clicks)}</td>
           <td class="num">${fmt(totals.downloads)}</td>
@@ -1738,6 +1743,42 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 function escapeAttr(s) { return escapeHtml(s); }
+
+// SharePoint URL normaliser — JS port of scripts/sharepoint_url.py.
+// Collapses percent-encoding, Office Online short-link prefixes
+// (/:b:/r/, /:w:/r/, ...), Doc.aspx?file=... wrappers, query/fragment
+// and host case into one canonical form matching Splunk's ObjectId.
+function normalizeSpUrl(url) {
+  if (url == null) return '';
+  let s = String(url).trim();
+  if (!s) return '';
+  const fullUnquote = (v) => {
+    let prev = null;
+    for (let i = 0; i < 5 && v !== prev; i++) {
+      prev = v;
+      try { v = decodeURIComponent(v); } catch { break; }
+    }
+    return v;
+  };
+  let parsed;
+  try { parsed = new URL(s); } catch {
+    return fullUnquote(s).replace(/\/+$/, '') || '';
+  }
+  let path = parsed.pathname || '/';
+  // Doc.aspx?file=<name> -> append file to base path
+  const docAspx = /\/_layouts\/15\/Doc\.aspx$/i;
+  if (docAspx.test(path)) {
+    const file = parsed.searchParams.get('file');
+    if (file) {
+      const base = path.replace(docAspx, '').replace(/\/_layouts.*$/i, '').replace(/\/+$/, '');
+      path = `${base}/${file}`;
+    }
+  }
+  // Office Online short-link prefix: /:b:/r/, /:w:/s/, ...
+  path = path.replace(/^\/:[a-z]:\/[a-z]\//i, '/');
+  path = fullUnquote(path).replace(/\/+$/, '');
+  return `${parsed.protocol.toLowerCase()}//${parsed.host.toLowerCase()}${path}`;
+}
 
 window.sortBy = function(table, col) {
   const s = sortState[table];
@@ -2343,11 +2384,11 @@ window.exportTable = async function(key) {
     },
     links: {
       sheet:   'Links',
-      headers: ['Page URL', 'Page Name', 'Link Label', 'Link Address', 'File Name', 'File Type', 'Total Clicks', 'Unique Clicks', 'Total Downloads'],
-      cols:    ['page_url', 'page_name', 'link_title', 'destination', 'file_name', 'file_type', 'total_clicks', 'unique_clicks', 'downloads'],
-      numIdx:  [6, 7, 8],
-      linkIdx: [0, 3],
-      totalsLabelSpan: 6,
+      headers: ['Page URL', 'Page Name', 'Link Label', 'Link Address', 'Normalized Link', 'File Name', 'File Type', 'Total Clicks', 'Unique Clicks', 'Total Downloads'],
+      cols:    ['page_url', 'page_name', 'link_title', 'destination', 'destination_normalized', 'file_name', 'file_type', 'total_clicks', 'unique_clicks', 'downloads'],
+      numIdx:  [7, 8, 9],
+      linkIdx: [0, 3, 4],
+      totalsLabelSpan: 7,
     },
     audDownloads: {
       sheet:   'Top Downloads by Division',
