@@ -2422,7 +2422,7 @@ window.exportTable = async function(key) {
     // ---- Header row ----
     const headerRow = ws.addRow(SPEC.headers);
     headerRow.height = 30;
-    headerRow.eachCell((cell, colIdx) => {
+    headerRow.eachCell({ includeEmpty: true }, (cell, colIdx) => {
       const isNum = SPEC.numIdx.includes(colIdx - 1);
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF404040' } };
       cell.font = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
@@ -2467,7 +2467,9 @@ window.exportTable = async function(key) {
         return '';
       });
       const totalRow = ws.addRow(totalsValues);
-      if (SPEC.totalsLabelSpan > 1) ws.mergeCells(totalRow.number, 1, totalRow.number, SPEC.totalsLabelSpan);
+      // Note: intentionally NOT merging the label cells. Excel refuses to
+      // sort an auto-filter range that contains merged cells of unequal
+      // width, and the auto-filter auto-extends down to include this row.
       totalRow.eachCell({ includeEmpty: true }, (cell, colIdx) => {
         const i = colIdx - 1;
         const isNum = SPEC.numIdx.includes(i);
