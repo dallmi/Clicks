@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>AppInsights vs Splunk — Click-Tracking Logik</title>
+<style>
+  :root {
+    --primary:    #E60000;
+    --bordeaux:   #BD000C;
+    --warning:    #E4A911;
+    --success:    #6F7A1A;
+    --info:       #0C7EC6;
+    --text:       #404040;
+    --muted:      #7A7870;
+    --light:      #CCCABC;
+    --bg:         #F7F7F5;
+    --surface:    #ECEBE4;
+    --surface2:   #F5F0E1;
+    --row-alt:    #F8F7F2;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; font-family: 'Helvetica Neue', Arial, sans-serif; color: var(--text); background: #fff; }
+  body { padding: 32px 48px 64px; max-width: 1280px; margin: 0 auto; }
+  h1 { font-size: 28px; font-weight: 600; margin: 0 0 6px; }
+  h2 { font-size: 18px; font-weight: 600; margin: 36px 0 4px; padding-bottom: 6px; border-bottom: 1px solid var(--surface); }
+  h3 { font-size: 13px; font-weight: 600; margin: 18px 0 6px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  p { line-height: 1.55; margin: 6px 0; font-size: 14px; }
+  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+
+  /* Section: lifecycle scenarios */
+  .scenarios { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 16px; }
+  .scn { background: #fff; border: 1px solid var(--surface); border-radius: 2px; padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); display: flex; flex-direction: column; }
+  .scn .title { font-weight: 600; font-size: 13px; margin-bottom: 8px; }
+  .scn .desc { font-size: 12px; color: var(--muted); min-height: 56px; margin-bottom: 10px; }
+  .scn .flow { font-size: 11px; color: var(--text); padding: 6px 8px; background: var(--surface); border-radius: 2px; margin-bottom: 8px; line-height: 1.4; }
+  .scn .counts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: auto; }
+  .badge { padding: 4px 6px; border-radius: 2px; font-size: 10px; font-weight: 600; text-align: center; border-left: 3px solid; }
+  .badge.ai    { border-left-color: var(--info);    background: #EAF4FB; color: var(--info); }
+  .badge.sp    { border-left-color: var(--bordeaux); background: #FAEBEC; color: var(--bordeaux); }
+  .badge .lbl  { font-weight: 400; color: var(--muted); display: block; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .badge .val  { font-size: 13px; }
+  .scn .verdict { font-size: 11px; padding: 6px 8px; margin-top: 8px; border-radius: 2px; border-left: 3px solid; }
+  .verdict.match    { background: #F1F3E3; border-left-color: var(--success); }
+  .verdict.ai-only  { background: #EAF4FB; border-left-color: var(--info); }
+  .verdict.sp-only  { background: #FAEBEC; border-left-color: var(--bordeaux); }
+  .verdict.skew     { background: #FBF3DE; border-left-color: var(--warning); }
+
+  /* Venn */
+  .venn-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; margin-top: 12px; }
+  .venn { background: #fff; border: 1px solid var(--surface); border-radius: 2px; padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+  .venn svg { width: 100%; height: 360px; display: block; }
+  .legend { font-size: 12px; line-height: 1.6; }
+  .legend .row { display: grid; grid-template-columns: 16px 1fr; gap: 8px; align-items: start; padding: 6px 0; border-bottom: 1px solid var(--surface); }
+  .legend .row:last-child { border-bottom: none; }
+  .legend .sw { width: 12px; height: 12px; margin-top: 4px; border-radius: 2px; }
+  .legend .ai-sw    { background: rgba(12, 126, 198, 0.35); border: 1px solid var(--info); }
+  .legend .sp-sw    { background: rgba(189, 0, 12, 0.30); border: 1px solid var(--bordeaux); }
+  .legend .both-sw  { background: linear-gradient(135deg, rgba(12,126,198,0.35) 50%, rgba(189,0,12,0.30) 50%); border: 1px solid var(--muted); }
+  .legend strong { color: var(--text); }
+
+  /* Matrix */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; background: #fff; border: 1px solid var(--surface); border-radius: 2px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--surface); vertical-align: top; }
+  th { background: var(--surface); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 2px solid var(--primary); }
+  tr:nth-child(even) td { background: var(--row-alt); }
+  td.center { text-align: center; font-weight: 600; }
+  td.match    { color: var(--success); }
+  td.mismatch { color: var(--bordeaux); }
+  td.partial  { color: var(--warning); }
+
+  /* Dedupe formula box */
+  .formula { background: var(--surface2); border-left: 3px solid var(--primary); padding: 12px 16px; margin: 12px 0; font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 12px; line-height: 1.6; }
+  .formula .kw { color: var(--bordeaux); font-weight: 600; }
+
+  .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .arrow { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<h1>AppInsights vs Splunk — Click-Tracking Logik</h1>
+<p class="subtitle">Wie sich beide Systeme bei einer User-Aktion verhalten, wo sie sich überschneiden und wo nicht.</p>
+
+<h2>1 · Click Lifecycle nach Szenario</h2>
+<p>Jede Karte zeigt einen User-Aktionstyp und welche Events dabei in AppInsights bzw. Splunk anfallen.</p>
+
+<div class="scenarios">
+
+  <div class="scn">
+    <div class="title">A · ZIP / EXE / echter Download</div>
+    <div class="desc">User klickt auf Intranet-Link, der eine ZIP- oder EXE-Datei serviert. Browser öffnet Download-Dialog.</div>
+    <div class="flow">Click <span class="arrow">→</span> SharePoint stream <span class="arrow">→</span> Browser save</div>
+    <div class="counts">
+      <div class="badge ai"><span class="lbl">AppInsights</span><span class="val">1 click_event</span></div>
+      <div class="badge sp"><span class="lbl">Splunk</span><span class="val">FileAccessed + FileDownloaded</span></div>
+    </div>
+    <div class="verdict match">Match nach Dedupe · 1:1</div>
+  </div>
+
+  <div class="scn">
+    <div class="title">B · DOCX / XLSX / PPTX</div>
+    <div class="desc">User klickt auf Office-Dokument. SharePoint öffnet Office Online Viewer inline.</div>
+    <div class="flow">Click <span class="arrow">→</span> Office Online Viewer <span class="arrow">→</span> Inline-Render</div>
+    <div class="counts">
+      <div class="badge ai"><span class="lbl">AppInsights</span><span class="val">1 click_event<br>(als download)</span></div>
+      <div class="badge sp"><span class="lbl">Splunk</span><span class="val">FileAccessed + FilePreviewed<br>(<em>kein</em> FileDownloaded)</span></div>
+    </div>
+    <div class="verdict skew">AI zählt als Download, Splunk nicht</div>
+  </div>
+
+  <div class="scn">
+    <div class="title">C · PDF</div>
+    <div class="desc">User klickt auf PDF. Browser zeigt inline im PDF.js Viewer, kein Save-Dialog.</div>
+    <div class="flow">Click <span class="arrow">→</span> SharePoint <span class="arrow">→</span> Browser PDF Viewer</div>
+    <div class="counts">
+      <div class="badge ai"><span class="lbl">AppInsights</span><span class="val">1 click_event<br>(als download)</span></div>
+      <div class="badge sp"><span class="lbl">Splunk</span><span class="val">FileAccessed<br>(meist <em>kein</em> FileDownloaded)</span></div>
+    </div>
+    <div class="verdict skew">AI zählt als Download, Splunk nur Access</div>
+  </div>
+
+  <div class="scn">
+    <div class="title">D · Direkt-Link Email / Teams</div>
+    <div class="desc">User folgt einem SharePoint-Link aus Outlook, Teams-Chat oder Browser-Bookmark — Intranet wird nicht angesteuert.</div>
+    <div class="flow">Email <span class="arrow">→</span> SharePoint direkt</div>
+    <div class="counts">
+      <div class="badge ai"><span class="lbl">AppInsights</span><span class="val">0 events</span></div>
+      <div class="badge sp"><span class="lbl">Splunk</span><span class="val">FileAccessed (+ ggf. Download)</span></div>
+    </div>
+    <div class="verdict sp-only">Nur in Splunk sichtbar</div>
+  </div>
+
+  <div class="scn">
+    <div class="title">E · Browser-Cache / Doppelklick</div>
+    <div class="desc">User klickt zweimal auf dieselbe Datei innerhalb kurzer Zeit; Browser bedient den zweiten Klick aus dem Cache.</div>
+    <div class="flow">Click 1 <span class="arrow">→</span> Backend &nbsp;·&nbsp; Click 2 <span class="arrow">→</span> Cache</div>
+    <div class="counts">
+      <div class="badge ai"><span class="lbl">AppInsights</span><span class="val">2 click_events</span></div>
+      <div class="badge sp"><span class="lbl">Splunk</span><span class="val">1 Access (Click 2 reicht nicht ans Backend)</span></div>
+    </div>
+    <div class="verdict ai-only">AI &gt; Splunk durch Cache</div>
+  </div>
+
+</div>
+
+<h2>2 · Mengen-Überschneidung</h2>
+<div class="venn-wrap">
+
+  <div class="venn">
+    <svg viewBox="0 0 600 360" preserveAspectRatio="xMidYMid meet" aria-label="Venn-Diagramm">
+      <!-- AppInsights circle -->
+      <circle cx="220" cy="180" r="140" fill="rgba(12,126,198,0.30)" stroke="#0C7EC6" stroke-width="2"/>
+      <!-- Splunk circle -->
+      <circle cx="380" cy="180" r="140" fill="rgba(189,0,12,0.25)" stroke="#BD000C" stroke-width="2"/>
+
+      <!-- Labels -->
+      <text x="120" y="40" font-family="Helvetica Neue, Arial" font-size="14" font-weight="600" fill="#0C7EC6">AppInsights · click_event</text>
+      <text x="382" y="40" font-family="Helvetica Neue, Arial" font-size="14" font-weight="600" fill="#BD000C">Splunk · SharePoint Audit</text>
+
+      <!-- Only AI -->
+      <text x="100" y="155" font-family="Helvetica Neue, Arial" font-size="11" fill="#404040" font-weight="600">Nur AppInsights</text>
+      <text x="100" y="172" font-family="Helvetica Neue, Arial" font-size="11" fill="#404040">· Externe Links</text>
+      <text x="100" y="188" font-family="Helvetica Neue, Arial" font-size="11" fill="#404040">· Browser-Cache-Klicks</text>
+      <text x="100" y="204" font-family="Helvetica Neue, Arial" font-size="11" fill="#404040">· Abgebrochene Loads</text>
+      <text x="100" y="220" font-family="Helvetica Neue, Arial" font-size="11" fill="#404040">· Klicks ohne File-Ziel</text>
+
+      <!-- Overlap -->
+      <text x="270" y="150" font-family="Helvetica Neue, Arial" font-size="11" fill="#404040" font-weight="600">Beide</text>
+      <text x="262" y="167" font-family="Helvetica Neue, Arial" font-size="11" fill="#404040">· Intranet-Klick</text>
+      <text x="262" y="183" font-family="Helvetica Neue, Arial" font-size="11" fill="#404040">  auf SharePoint-Datei</text>
+      <text x="262" y="201" font-family="Helvetica Neue, Arial" font-size="11" fill="#404040">  mit echtem Backend-</text>
+      <text x="262" y="217" font-family="Helvetica Neue, Arial" font-size="11" fill="#404040">  Hit (Access/Download)</text>
+
+      <!-- Only Splunk -->
+      <text x="420" y="155" font-family="Helvetica Neue, Arial" font-size="11" fill="#404040" font-weight="600">Nur Splunk</text>
+      <text x="420" y="172" font-family="Helvetica Neue, Arial" font-size="11" fill="#404040">· Email / Teams Links</text>
+      <text x="420" y="188" font-family="Helvetica Neue, Arial" font-size="11" fill="#404040">· Browser-Bookmarks</text>
+      <text x="420" y="204" font-family="Helvetica Neue, Arial" font-size="11" fill="#404040">· Sync-Client (OneDrive)</text>
+      <text x="420" y="220" font-family="Helvetica Neue, Arial" font-size="11" fill="#404040">· API/Power-Automate</text>
+    </svg>
+  </div>
+
+  <div class="legend">
+    <h3>Lesehilfe</h3>
+    <div class="row"><span class="sw ai-sw"></span><span><strong>Linker Kreis · AppInsights:</strong> jeder Browser-Klick auf der Intranet-Oberfläche, gemessen am DOM-Click-Event. Misst <em>User-Intent</em>.</span></div>
+    <div class="row"><span class="sw both-sw"></span><span><strong>Überschneidung:</strong> User klickt im Intranet auf eine SharePoint-Datei und das Backend liefert sie tatsächlich aus. Hier ist 1:1-Vergleich nach Dedupe sinnvoll.</span></div>
+    <div class="row"><span class="sw sp-sw"></span><span><strong>Rechter Kreis · Splunk:</strong> jeder SharePoint-Backend-Zugriff, unabhängig vom Einstiegspunkt. Misst <em>Backend-Realität</em>.</span></div>
+  </div>
+
+</div>
+
+<h2>3 · Dedupe-Logik im Vergleich</h2>
+<p>Ein einziger User-Klick erzeugt in Splunk häufig <strong>mehrere</strong> Audit-Events (z.B. <code>FileAccessed</code> beim Folgen des Links plus <code>FileDownloaded</code> beim Stream). Damit der Vergleich mit AppInsights fair bleibt, kollabieren wir diese auf eine logische User-Aktion:</p>
+
+<div class="formula">
+<span class="kw">SELECT DISTINCT</span> user_id, object_id, <span class="kw">date_trunc</span>('minute', ts)<br>
+<span class="kw">FROM</span> splunk_raw<br>
+<span class="kw">WHERE</span> object_id LIKE '%&lt;filter&gt;%'
+</div>
+
+<p>Gleicher User · gleiche Datei · gleiche Minute = 1 Event — vergleichbar mit <em>einem</em> <code>click_event</code> in AppInsights.</p>
+
+<h2>4 · Erwartete Delta-Richtung pro Szenario</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Szenario</th>
+      <th>AppInsights</th>
+      <th>Splunk (deduped)</th>
+      <th>Delta-Richtung</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Klick auf ZIP/EXE/echte Download-Datei</td><td class="center">1</td><td class="center">1</td><td class="match">Match</td></tr>
+    <tr><td>Klick auf DOCX/XLSX/PPTX (Office Online inline)</td><td class="center">1</td><td class="center">1 (Access)</td><td class="partial">Wenn FileDownloaded-Filter: AI &gt; Splunk</td></tr>
+    <tr><td>Klick auf PDF (Browser-Viewer inline)</td><td class="center">1</td><td class="center">1 (Access)</td><td class="partial">Wenn FileDownloaded-Filter: AI &gt; Splunk</td></tr>
+    <tr><td>Externer Link (LinkedIn, Wikipedia, ...)</td><td class="center">1</td><td class="center">0</td><td class="mismatch">AI &gt; Splunk</td></tr>
+    <tr><td>Klick auf Intranet-Seite (kein File)</td><td class="center">1</td><td class="center">0</td><td class="mismatch">AI &gt; Splunk</td></tr>
+    <tr><td>Direkt-Link aus Email / Teams / Bookmark</td><td class="center">0</td><td class="center">1</td><td class="mismatch">Splunk &gt; AI</td></tr>
+    <tr><td>OneDrive-Sync, Power Automate, REST API</td><td class="center">0</td><td class="center">1</td><td class="mismatch">Splunk &gt; AI</td></tr>
+    <tr><td>Wiederholter Klick auf gecachte Datei innerhalb 1 min</td><td class="center">N</td><td class="center">1</td><td class="mismatch">AI &gt; Splunk</td></tr>
+    <tr><td>Abgebrochener Download (Click ja, Backend nein)</td><td class="center">1</td><td class="center">0</td><td class="mismatch">AI &gt; Splunk</td></tr>
+  </tbody>
+</table>
+
+<h2>5 · Praktische Konsequenz für deinen Vergleich</h2>
+<p>Die "richtige" Splunk-Operations-Auswahl hängt davon ab, welche Frage du beantworten willst:</p>
+<table>
+  <thead>
+    <tr><th>Frage</th><th>Splunk-Filter</th><th>Vergleichsbasis</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Wie viele User <strong>greifen</strong> auf eine Datei zu?</td>
+      <td><code>FileAccessed + FileDownloaded + FilePreviewed</code>, deduped</td>
+      <td>≈ AI <code>total_clicks</code> auf File-Links</td>
+    </tr>
+    <tr>
+      <td>Wie viele Files werden <strong>tatsächlich heruntergeladen</strong>?</td>
+      <td><code>FileDownloaded</code> ohne Dedupe</td>
+      <td>Niemals direkt mit AI-Downloads vergleichbar (Office/PDF-Inline-Lücke)</td>
+    </tr>
+    <tr>
+      <td>Wie groß ist der <strong>nicht-via-Intranet</strong> Traffic?</td>
+      <td><code>FileAccessed</code> deduped</td>
+      <td>Splunk-Total − AI-Total = Direkt-Zugriffe</td>
+    </tr>
+  </tbody>
+</table>
+
+<p class="note">Generiert für das Click-Tracking-Projekt · siehe <code>scripts/compare_splunk.py</code> für die Implementierung.</p>
+
+</body>
+</html>
