@@ -1885,11 +1885,14 @@ def process_clicks(input_file=None, full_refresh=False):
     # Print summary
     print_summary(con, output_dir)
 
-    # Cleanup: drop tables that are re-created each run to reduce DB size
+    # Cleanup: drop tables that are re-created each run to reduce DB size.
+    # NOTE: events_raw is deliberately NOT dropped — it is the persistent
+    # accumulator that delta mode upserts into across runs. Dropping it would
+    # make every parameterless run start from an empty table, so the dashboard
+    # would only ever show the most recently processed file.
     log("\nCleaning up intermediate tables...")
     db_size_before = os.path.getsize(db_path) / (1024 * 1024)
     con.execute("DROP TABLE IF EXISTS hr_history")
-    con.execute("DROP TABLE IF EXISTS events_raw")
     for video_table in ['video_events', 'video_segments', 'video_unique_seconds',
                          'video_sessions', 'video_views', 'video_user_video',
                          'video_metadata', 'video_engagement']:
@@ -1902,7 +1905,7 @@ def process_clicks(input_file=None, full_refresh=False):
     con.execute("VACUUM")
     con.execute("CHECKPOINT")
     db_size_after = os.path.getsize(db_path) / (1024 * 1024)
-    log(f"  Dropped hr_history, events_raw, video temp tables, and CDM temp tables; vacuumed database")
+    log(f"  Dropped hr_history, video temp tables, and CDM temp tables; kept events_raw accumulator; vacuumed database")
     log(f"  Database size: {db_size_before:.1f} MB -> {db_size_after:.1f} MB")
 
     log(f"\nDatabase: {db_path}")
