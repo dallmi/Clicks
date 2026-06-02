@@ -274,14 +274,16 @@ body {
 .cp-trigger.open { border-color: var(--primary); }
 .cp-trigger .cp-count { color: var(--medium-gray); font-size: 0.72rem; }
 .cp-popover {
-  position: absolute; top: calc(100% + 2px); right: 0;
+  /* Fixed positioning escapes the .section overflow:hidden clip — the
+     popover is anchored to the trigger via JS getBoundingClientRect on open. */
+  position: fixed;
   min-width: 240px;
   max-height: 420px;
   background: var(--white);
   border: 1px solid var(--light-gray);
   border-radius: 2px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-  z-index: 100;
+  z-index: 200;
   display: flex; flex-direction: column;
 }
 .cp-popover.hidden { display: none; }
@@ -1235,11 +1237,20 @@ class ColumnPicker {
     if (!ColumnPicker._docBound) {
       document.addEventListener('click', e => {
         ColumnPicker.instances.forEach(cp => {
-          if (cp.open && !cp.root.contains(e.target)) cp.toggleOpen(false);
+          // popover is fixed-positioned outside cp.root, so also exclude clicks inside it
+          if (cp.open && !cp.root.contains(e.target) && !cp.popoverEl.contains(e.target)) cp.toggleOpen(false);
         });
       });
       document.addEventListener('keydown', e => {
         if (e.key === 'Escape') ColumnPicker.instances.forEach(cp => cp.toggleOpen(false));
+      });
+      // Close any open popover when the page scrolls or window resizes —
+      // the fixed-position anchor would otherwise drift away from the trigger.
+      window.addEventListener('scroll', () => {
+        ColumnPicker.instances.forEach(cp => { if (cp.open) cp.toggleOpen(false); });
+      }, true);
+      window.addEventListener('resize', () => {
+        ColumnPicker.instances.forEach(cp => { if (cp.open) cp.toggleOpen(false); });
       });
       ColumnPicker._docBound = true;
     }
@@ -1248,10 +1259,19 @@ class ColumnPicker {
   isVisible(key) { return this.visible.has(key); }
   getVisibleSet() { return new Set(this.visible); }
 
+  positionPopover() {
+    const r = this.triggerEl.getBoundingClientRect();
+    // Anchor below the trigger, right-aligned to it, clamped to the viewport
+    this.popoverEl.style.top   = `${r.bottom + 2}px`;
+    this.popoverEl.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+    this.popoverEl.style.left  = 'auto';
+  }
+
   toggleOpen(force) {
     const next = typeof force === 'boolean' ? force : !this.open;
     if (next === this.open) return;
     this.open = next;
+    if (this.open) this.positionPopover();
     this.popoverEl.classList.toggle('hidden', !this.open);
     this.triggerEl.classList.toggle('open', this.open);
   }
