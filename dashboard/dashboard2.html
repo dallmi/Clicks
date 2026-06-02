@@ -256,6 +256,81 @@ body {
   border-top: 1px solid var(--surface);
 }
 
+/* ---- Column Picker (per-table show/hide) ---- */
+.col-picker { position: relative; display: inline-block; }
+.cp-trigger {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--light-gray);
+  background: var(--white);
+  color: var(--dark-gray);
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.cp-trigger:hover { background: var(--surface); border-color: var(--medium-gray); }
+.cp-trigger.open { border-color: var(--primary); }
+.cp-trigger .cp-count { color: var(--medium-gray); font-size: 0.72rem; }
+.cp-popover {
+  position: absolute; top: calc(100% + 2px); right: 0;
+  min-width: 240px;
+  max-height: 420px;
+  background: var(--white);
+  border: 1px solid var(--light-gray);
+  border-radius: 2px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  z-index: 100;
+  display: flex; flex-direction: column;
+}
+.cp-popover.hidden { display: none; }
+.cp-actions {
+  display: flex; gap: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--light-gray);
+  background: var(--bg);
+}
+.cp-action {
+  font-size: 0.7rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--light-gray);
+  background: var(--white);
+  color: var(--medium-gray);
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.cp-action:hover { color: var(--dark-gray); border-color: var(--medium-gray); }
+.cp-list { flex: 1; overflow-y: auto; padding: 0.3rem 0; }
+.cp-group-label {
+  padding: 0.35rem 0.6rem 0.15rem;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--medium-gray);
+  font-weight: 600;
+}
+.cp-option {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  user-select: none;
+}
+.cp-option:hover { background: var(--surface); }
+.cp-option input[type="checkbox"] { cursor: pointer; margin: 0; flex-shrink: 0; }
+.cp-option .cp-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-option .cp-kind {
+  font-size: 0.62rem;
+  color: var(--medium-gray);
+  background: var(--surface);
+  padding: 0.05rem 0.35rem;
+  border-radius: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .date-presets {
   display: flex;
   gap: 0;
@@ -785,24 +860,14 @@ table.heatmap td.cell { font-variant-numeric: tabular-nums; font-weight: 500; }
 
       <div class="section">
         <div class="section-head">
-          <div class="section-title">Pages</div>
+          <div class="section-title">Pages &amp; Links</div>
           <div class="section-actions">
             <span class="section-meta" id="pagesMeta"></span>
+            <div class="col-picker" id="cp_pages"></div>
             <button class="btn" onclick="exportTable('pages')">Export XLSX</button>
           </div>
         </div>
         <div class="table-wrap" id="pagesTable"></div>
-      </div>
-
-      <div class="section">
-        <div class="section-head">
-          <div class="section-title">Clicks on links and download documents</div>
-          <div class="section-actions">
-            <span class="section-meta" id="linksMeta"></span>
-            <button class="btn" onclick="exportTable('links')">Export XLSX</button>
-          </div>
-        </div>
-        <div class="table-wrap" id="linksTable"></div>
       </div>
     </div>
 
@@ -891,11 +956,10 @@ let dateFilter = { from: null, to: null };
 let activePreset = 'all';
 let sortState = {
   pages: { col: 'total_clicks', dir: 'desc' },
-  links: { col: 'total_clicks', dir: 'desc' },
   audDownloads: { col: 'downloads', dir: 'desc' },
   audPages:     { col: 'clicks',    dir: 'desc' }
 };
-let lastResults = { pages: null, links: null, audDownloads: null, audPages: null };
+let lastResults = { pages: null, audDownloads: null, audPages: null };
 
 const TABLE_LIMIT = 100;
 
@@ -1154,6 +1218,231 @@ class MultiSelect {
 const multiSelects = {};
 
 // =====================================================================
+// Column Picker (per-table show/hide of columns)
+// =====================================================================
+class ColumnPicker {
+  static instances = [];
+  static _docBound = false;
+
+  constructor(rootId, opts = {}) {
+    this.root = document.getElementById(rootId);
+    this.columns = opts.columns || [];      // [{key, label, kind}]
+    this.visible = new Set((opts.visible ?? this.columns.map(c => c.key)));
+    this.onChange = opts.onChange || (() => {});
+    this.open = false;
+    this.render();
+    ColumnPicker.instances.push(this);
+    if (!ColumnPicker._docBound) {
+      document.addEventListener('click', e => {
+        ColumnPicker.instances.forEach(cp => {
+          if (cp.open && !cp.root.contains(e.target)) cp.toggleOpen(false);
+        });
+      });
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') ColumnPicker.instances.forEach(cp => cp.toggleOpen(false));
+      });
+      ColumnPicker._docBound = true;
+    }
+  }
+
+  isVisible(key) { return this.visible.has(key); }
+  getVisibleSet() { return new Set(this.visible); }
+
+  toggleOpen(force) {
+    const next = typeof force === 'boolean' ? force : !this.open;
+    if (next === this.open) return;
+    this.open = next;
+    this.popoverEl.classList.toggle('hidden', !this.open);
+    this.triggerEl.classList.toggle('open', this.open);
+  }
+
+  render() {
+    const KIND_LABEL = { dim: 'Dimension', computed: 'Dimension', attr: 'Attribute', metric: 'Metric' };
+    const KIND_ORDER = { dim: 0, computed: 0, attr: 1, metric: 2 };
+    const groups = [
+      { id: 'dim',    label: 'Dimensions (Group By)' },
+      { id: 'attr',   label: 'Attributes' },
+      { id: 'metric', label: 'Metrics' },
+    ];
+    const grouped = { dim: [], attr: [], metric: [] };
+    for (const c of this.columns) {
+      const g = c.kind === 'computed' ? 'dim' : c.kind;
+      grouped[g].push(c);
+    }
+    const listHtml = groups.filter(g => grouped[g.id].length).map(g => `
+      <div class="cp-group-label">${g.label}</div>
+      ${grouped[g.id].map(c => {
+        const checked = this.visible.has(c.key) ? 'checked' : '';
+        const safe = escapeHtml(c.label);
+        return `<label class="cp-option"><input type="checkbox" ${checked} data-key="${c.key}"><span class="cp-text" title="${safe}">${safe}</span>${c.kind === 'computed' ? '<span class="cp-kind" title="Computed from another column">calc</span>' : ''}</label>`;
+      }).join('')}
+    `).join('');
+
+    this.root.innerHTML = `
+      <button type="button" class="cp-trigger">
+        <span>Columns</span>
+        <span class="cp-count"></span>
+        <span class="ms-caret">▾</span>
+      </button>
+      <div class="cp-popover hidden">
+        <div class="cp-actions">
+          <button type="button" class="cp-action" data-action="all">Show all</button>
+          <button type="button" class="cp-action" data-action="none">Hide all</button>
+          <button type="button" class="cp-action" data-action="reset">Reset</button>
+        </div>
+        <div class="cp-list">${listHtml}</div>
+      </div>`;
+    this.triggerEl = this.root.querySelector('.cp-trigger');
+    this.popoverEl = this.root.querySelector('.cp-popover');
+    this.countEl   = this.root.querySelector('.cp-count');
+    this.listEl    = this.root.querySelector('.cp-list');
+    this.defaultVisible = new Set(this.visible);
+
+    this.triggerEl.addEventListener('click', e => {
+      e.stopPropagation();
+      ColumnPicker.instances.forEach(cp => { if (cp !== this) cp.toggleOpen(false); });
+      this.toggleOpen();
+    });
+    this.popoverEl.addEventListener('click', e => e.stopPropagation());
+
+    this.root.querySelector('[data-action="all"]').addEventListener('click', () => {
+      this.columns.forEach(c => this.visible.add(c.key));
+      this.refresh(); this.onChange();
+    });
+    this.root.querySelector('[data-action="none"]').addEventListener('click', () => {
+      this.visible.clear();
+      this.refresh(); this.onChange();
+    });
+    this.root.querySelector('[data-action="reset"]').addEventListener('click', () => {
+      this.visible = new Set(this.defaultVisible);
+      this.refresh(); this.onChange();
+    });
+    this.listEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const key = cb.dataset.key;
+        if (cb.checked) this.visible.add(key); else this.visible.delete(key);
+        this.updateCount();
+        this.onChange();
+      });
+    });
+    this.updateCount();
+  }
+
+  refresh() {
+    this.listEl.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.checked = this.visible.has(cb.dataset.key);
+    });
+    this.updateCount();
+  }
+
+  updateCount() {
+    if (this.countEl) this.countEl.textContent = `(${this.visible.size}/${this.columns.length})`;
+  }
+}
+
+const columnPickers = {};
+
+function setupColumnPickers() {
+  const pagesCols = buildPagesColDefs();
+  columnPickers.pages = new ColumnPicker('cp_pages', {
+    columns: pagesCols.map(c => ({ key: c.key, label: c.label, kind: c.kind })),
+    visible: PAGES_DEFAULT_VISIBLE,
+    onChange: () => renderPagesTable(),
+  });
+}
+
+// ---- Column metadata builder (called after columns are resolved) ----
+// Single unified column set for the Pages & Links table — user toggles
+// dimensions to switch between page-level and link-level granularity.
+function buildPagesColDefs() {
+  const pageCol  = columns.pageName || columns.pageUrl;
+  const urlCol   = columns.pageUrl  || columns.pageName;
+  const labelCol = columns.linkLabel;
+  const fileNameExpr = columns.fileName
+    ? `MAX(CASE WHEN ${columns.fileName} IS NOT NULL AND ${columns.fileName} <> '' THEN ${columns.fileName} END)`
+    : `NULL`;
+  const fileTypeExpr = columns.fileType
+    ? `MAX(CASE WHEN ${columns.fileType} IS NOT NULL AND ${columns.fileType} <> '' THEN ${columns.fileType} END)`
+    : `NULL`;
+  return [
+    // ---- Dimensions (GROUP BY) ----
+    { key: 'page_name',  label: 'Page Name', kind: 'dim', sortable: true,
+      selectSql: `COALESCE(${pageCol}, '(unknown)')`,
+      cell: r => `<td>${escapeHtml(r.page_name)}</td>` },
+    { key: 'url',        label: 'Page URL',  kind: 'dim', sortable: true,
+      selectSql: `COALESCE(${urlCol}, '')`,
+      cell: r => `<td class="url" title="${escapeHtml(r.url)}">${escapeHtml(r.url)}</td>` },
+    { key: 'link_title', label: 'Link Label', kind: 'dim', sortable: true,
+      selectSql: labelCol ? `COALESCE(${labelCol}, '(no label)')` : `'(no label)'`,
+      cell: r => `<td class="label" title="${escapeHtml(r.link_title)}">${escapeHtml(r.link_title)}</td>` },
+    { key: 'destination', label: 'Link Address', kind: 'dim', sortable: true,
+      selectSql: `COALESCE(${columns.linkAddress}, '')`,
+      cell: r => `<td class="url"><a href="${escapeAttr(r.destination)}" target="_blank" rel="noopener" title="${escapeHtml(r.destination)}">${escapeHtml(r.destination)}</a></td>` },
+    { key: 'destination_normalized', label: 'Normalized Link', kind: 'computed', requires: 'destination', sortable: true,
+      cell: r => `<td class="url" title="${escapeHtml(r.destination_normalized || '')}">${escapeHtml(r.destination_normalized || '')}</td>` },
+    // ---- Attributes (MAX aggregates — not in GROUP BY) ----
+    { key: 'file_name', label: 'File Name', kind: 'attr', sortable: true, selectSql: fileNameExpr,
+      cell: r => `<td class="label" title="${escapeHtml(r.file_name || '')}">${escapeHtml(r.file_name || '—')}</td>` },
+    { key: 'file_type', label: 'File Type', kind: 'attr', sortable: true, selectSql: fileTypeExpr,
+      cell: r => `<td>${escapeHtml(r.file_type || '—')}</td>` },
+    // ---- Metrics ----
+    { key: 'num_links_clicked', label: 'Number of Links Clicked', kind: 'metric', sortable: true, num: true,
+      selectSql: `COUNT(DISTINCT ${columns.linkAddress})`,
+      cell: r => `<td class="num">${fmt(r.num_links_clicked)}</td>` },
+    { key: 'total_clicks', label: 'Total Clicks', kind: 'metric', sortable: true, num: true,
+      selectSql: `COUNT(*)`,
+      cell: r => `<td class="num">${fmt(r.total_clicks)}</td>` },
+    { key: 'unique_clicks', label: 'Unique Clicks', kind: 'metric', sortable: true, num: true,
+      selectSql: `COUNT(DISTINCT (${columns.gpn} || '|' || COALESCE(${columns.linkAddress}, '')))`,
+      cell: r => `<td class="num">${fmt(r.unique_clicks)}</td>` },
+    { key: 'downloads', label: 'Total Downloads', kind: 'metric', sortable: true, num: true,
+      selectSql: dlExpr(),
+      cell: r => `<td class="num">${fmt(r.downloads)}</td>` },
+  ];
+}
+
+// Defaults: matches the original Pages view — user can toggle on link_title /
+// destination / file_name / file_type to drill into link granularity.
+const PAGES_DEFAULT_VISIBLE = ['page_name', 'url', 'num_links_clicked', 'total_clicks', 'unique_clicks', 'downloads'];
+
+// Build the SELECT clause and GROUP BY indices from visible columns.
+// computed columns force their `requires` source into the SELECT/GROUP BY
+// even when the source dim itself is hidden.
+function buildSelectGroupBy(colDefs, visible) {
+  const effectiveDimKeys = new Set();
+  for (const c of colDefs) {
+    if (!visible.has(c.key)) continue;
+    if (c.kind === 'dim') effectiveDimKeys.add(c.key);
+    if (c.kind === 'computed' && c.requires) effectiveDimKeys.add(c.requires);
+  }
+  const selectParts = [];
+  const groupIdx = [];
+  const includedKeys = new Set();
+  let i = 1;
+  for (const c of colDefs) {
+    if (c.kind === 'dim') {
+      if (!effectiveDimKeys.has(c.key)) continue;
+      selectParts.push(`${c.selectSql} AS ${c.key}`);
+      groupIdx.push(String(i));
+      includedKeys.add(c.key);
+      i++;
+    } else if (c.kind === 'attr') {
+      if (!visible.has(c.key)) continue;
+      selectParts.push(`${c.selectSql} AS ${c.key}`);
+      includedKeys.add(c.key);
+      i++;
+    } else if (c.kind === 'metric') {
+      if (!visible.has(c.key)) continue;
+      selectParts.push(`${c.selectSql} AS ${c.key}`);
+      includedKeys.add(c.key);
+      i++;
+    }
+    // computed: no SELECT; derived in JS from c.requires
+  }
+  return { selectParts, groupIdx, includedKeys, effectiveDimKeys };
+}
+
+// =====================================================================
 // Init
 // =====================================================================
 async function init() {
@@ -1181,6 +1470,7 @@ async function init() {
     await resolveColumns();
     await setInitialDateRange();
     await populateFilterDatalists();
+    setupColumnPickers();
 
     try {
       const r = await q(`SELECT MAX(timestamp_cet) AS latest FROM events`);
@@ -1365,7 +1655,7 @@ async function renderAll() {
   setStatus('loading', 'Querying…');
   try {
     if (activeTab === 'tabPagesLinks') {
-      await Promise.all([renderKPIs(), renderTrendChart(), renderPagesTable(), renderLinksTable()]);
+      await Promise.all([renderKPIs(), renderTrendChart(), renderPagesTable()]);
       pagesLinksDirty = false;
       audienceDirty = true;
     } else if (activeTab === 'tabAudience') {
@@ -1392,7 +1682,7 @@ window.switchTab = function(tabId) {
       .catch(err => { console.error(err); setStatus('error', err.message); });
   } else if (tabId === 'tabPagesLinks' && pagesLinksDirty) {
     setStatus('loading', 'Querying…');
-    Promise.all([renderKPIs(), renderTrendChart(), renderPagesTable(), renderLinksTable()])
+    Promise.all([renderKPIs(), renderTrendChart(), renderPagesTable()])
       .then(() => { pagesLinksDirty = false; setStatus('ready', getRefreshLabel()); })
       .catch(err => { console.error(err); setStatus('error', err.message); });
   }
@@ -1545,165 +1835,98 @@ async function renderPagesTable() {
     return;
   }
   const w = whereClause();
-  const pageCol = columns.pageName || columns.pageUrl;
-  const urlCol  = columns.pageUrl  || columns.pageName;
-  const dlExpr = columns.fileType
-    ? `COUNT(*) FILTER (WHERE ${columns.fileType} IS NOT NULL AND ${columns.fileType} <> '')`
-    : columns.fileName
-      ? `COUNT(*) FILTER (WHERE ${columns.fileName} IS NOT NULL AND ${columns.fileName} <> '')`
-      : `0`;
-
-  const sort = sortState.pages;
-  const baseQuery = `
-    SELECT
-      COALESCE(${pageCol}, '(unknown)') AS page_name,
-      COALESCE(${urlCol},  '')          AS url,
-      COUNT(DISTINCT ${columns.linkAddress}) AS num_links_clicked,
-      COUNT(*) AS total_clicks,
-      COUNT(DISTINCT (${columns.gpn} || '|' || COALESCE(${columns.linkAddress}, ''))) AS unique_clicks,
-      ${dlExpr} AS downloads
-    FROM events ${w}
-    GROUP BY 1, 2
-    ORDER BY ${sort.col} ${sort.dir.toUpperCase()}`;
-  const rows = await q(`${baseQuery} LIMIT ${TABLE_LIMIT}`);
-
-  const totals = (await q(`
-    SELECT
-      COUNT(DISTINCT ${columns.linkAddress}) AS num_links_clicked,
-      COUNT(*) AS total_clicks,
-      COUNT(DISTINCT (${columns.gpn} || '|' || COALESCE(${columns.linkAddress}, ''))) AS unique_clicks,
-      ${dlExpr} AS downloads
-    FROM events ${w}
-  `))[0];
-
-  lastResults.pages = { rows, totals, baseQuery };
-  document.getElementById('pagesMeta').textContent = `Top ${rows.length}`;
-
-  document.getElementById('pagesTable').innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          ${th('pages', 'page_name', 'Page Name')}
-          ${th('pages', 'url', 'URL')}
-          ${th('pages', 'num_links_clicked', 'Number of Links Clicked', true)}
-          ${th('pages', 'total_clicks', 'Total Clicks', true)}
-          ${th('pages', 'unique_clicks', 'Unique Clicks', true)}
-          ${th('pages', 'downloads', 'Total Downloads', true)}
-        </tr>
-      </thead>
-      <tbody>
-        ${rows.map(r => `
-          <tr>
-            <td>${escapeHtml(r.page_name)}</td>
-            <td class="url" title="${escapeHtml(r.url)}">${escapeHtml(r.url)}</td>
-            <td class="num">${fmt(r.num_links_clicked)}</td>
-            <td class="num">${fmt(r.total_clicks)}</td>
-            <td class="num">${fmt(r.unique_clicks)}</td>
-            <td class="num">${fmt(r.downloads)}</td>
-          </tr>
-        `).join('')}
-      </tbody>
-      <tfoot>
-        <tr>
-          <td colspan="2">Overall (filtered)</td>
-          <td class="num">${fmt(totals.num_links_clicked)}</td>
-          <td class="num">${fmt(totals.total_clicks)}</td>
-          <td class="num">${fmt(totals.unique_clicks)}</td>
-          <td class="num">${fmt(totals.downloads)}</td>
-        </tr>
-      </tfoot>
-    </table>`;
+  const colDefs = buildPagesColDefs();
+  const visible = columnPickers.pages ? columnPickers.pages.getVisibleSet() : new Set(colDefs.map(c => c.key));
+  if (visible.size === 0) {
+    document.getElementById('pagesMeta').textContent = '';
+    document.getElementById('pagesTable').innerHTML = '<div class="empty-state">No columns selected. Use the Columns dropdown to pick at least one.</div>';
+    lastResults.pages = null;
+    return;
+  }
+  await renderGenericTable({
+    tableKey: 'pages',
+    targetId: 'pagesTable',
+    metaId:   'pagesMeta',
+    colDefs, visible, w,
+    postProcess: rows => {
+      for (const r of rows) {
+        if ('destination' in r) r.destination_normalized = normalizeSpUrl(r.destination);
+      }
+    },
+  });
 }
 
-async function renderLinksTable() {
-  const w = whereClause();
-  const pageCol  = columns.pageName || columns.pageUrl;
-  const urlCol   = columns.pageUrl  || columns.pageName;
-  const labelCol = columns.linkLabel;
-  const dlExpr = columns.fileType
-    ? `COUNT(*) FILTER (WHERE ${columns.fileType} IS NOT NULL AND ${columns.fileType} <> '')`
-    : columns.fileName
-      ? `COUNT(*) FILTER (WHERE ${columns.fileName} IS NOT NULL AND ${columns.fileName} <> '')`
-      : `0`;
 
-  const fileNameExpr = columns.fileName
-    ? `MAX(CASE WHEN ${columns.fileName} IS NOT NULL AND ${columns.fileName} <> '' THEN ${columns.fileName} END)`
-    : `NULL`;
-  const fileTypeExpr = columns.fileType
-    ? `MAX(CASE WHEN ${columns.fileType} IS NOT NULL AND ${columns.fileType} <> '' THEN ${columns.fileType} END)`
-    : `NULL`;
+// Generic table renderer driven by column metadata + visibility.
+// Builds SELECT/GROUP BY dynamically — dropping a dim re-aggregates the data.
+async function renderGenericTable({ tableKey, targetId, metaId, colDefs, visible, w, postProcess }) {
+  const { selectParts, groupIdx, includedKeys, effectiveDimKeys } = buildSelectGroupBy(colDefs, visible);
 
-  const sort = sortState.links;
-  // destination_normalized is computed in JS; sort by underlying column.
-  const sortCol = sort.col === 'destination_normalized' ? 'destination' : sort.col;
+  // Sort: fall back if current sort col isn't in the result set.
+  const sort = sortState[tableKey];
+  let sortCol = sort.col;
+  let sortDir = sort.dir;
+  if (!includedKeys.has(sortCol)) {
+    // computed columns sort by their `requires` source if present
+    const def = colDefs.find(c => c.key === sortCol);
+    if (def && def.kind === 'computed' && def.requires && effectiveDimKeys.has(def.requires)) {
+      sortCol = def.requires;
+    } else {
+      // pick first visible metric desc, else first visible dim asc
+      const metric = colDefs.find(c => c.kind === 'metric' && includedKeys.has(c.key));
+      const dim    = colDefs.find(c => (c.kind === 'dim' || c.kind === 'attr') && includedKeys.has(c.key));
+      if (metric) { sortCol = metric.key; sortDir = 'desc'; }
+      else if (dim) { sortCol = dim.key; sortDir = 'asc'; }
+      else { sortCol = null; }
+    }
+  } else {
+    // remap computed → required source for ORDER BY (sort still labeled as the computed col)
+    const def = colDefs.find(c => c.key === sortCol);
+    if (def && def.kind === 'computed' && def.requires) sortCol = def.requires;
+  }
+
+  const groupByClause = groupIdx.length ? `GROUP BY ${groupIdx.join(', ')}` : '';
+  const orderByClause = sortCol ? `ORDER BY ${sortCol} ${sortDir.toUpperCase()}` : '';
   const baseQuery = `
-    SELECT
-      COALESCE(${urlCol},  '')          AS page_url,
-      COALESCE(${pageCol}, '(unknown)') AS page_name,
-      ${labelCol ? `COALESCE(${labelCol}, '(no label)')` : `'(no label)'`} AS link_title,
-      COALESCE(${columns.linkAddress}, '') AS destination,
-      ${fileNameExpr} AS file_name,
-      ${fileTypeExpr} AS file_type,
-      COUNT(*) AS total_clicks,
-      COUNT(DISTINCT ${columns.gpn}) AS unique_clicks,
-      ${dlExpr} AS downloads
+    SELECT ${selectParts.join(',\n      ')}
     FROM events ${w}
-    GROUP BY 1, 2, 3, 4
-    ORDER BY ${sortCol} ${sort.dir.toUpperCase()}`;
+    ${groupByClause}
+    ${orderByClause}`;
   const rows = await q(`${baseQuery} LIMIT ${TABLE_LIMIT}`);
-  for (const r of rows) r.destination_normalized = normalizeSpUrl(r.destination);
+  if (postProcess) postProcess(rows);
 
-  const totals = (await q(`
-    SELECT
-      COUNT(*) AS total_clicks,
-      COUNT(DISTINCT (${columns.gpn} || '|' || COALESCE(${columns.linkAddress}, ''))) AS unique_clicks,
-      ${dlExpr} AS downloads
-    FROM events ${w}
-  `))[0];
+  // Totals: global metrics across all rows matching the WHERE — no GROUP BY.
+  const visibleMetricDefs = colDefs.filter(c => c.kind === 'metric' && includedKeys.has(c.key));
+  let totals = null;
+  if (visibleMetricDefs.length) {
+    const totalsSelects = visibleMetricDefs.map(c => `${c.selectSql} AS ${c.key}`);
+    totals = (await q(`SELECT ${totalsSelects.join(', ')} FROM events ${w}`))[0];
+  }
 
-  lastResults.links = { rows, totals, baseQuery };
-  document.getElementById('linksMeta').textContent = `Top ${rows.length}`;
+  lastResults[tableKey] = { rows, totals, baseQuery, colDefs, visible };
+  document.getElementById(metaId).textContent = `Top ${rows.length}`;
 
-  document.getElementById('linksTable').innerHTML = `
+  const visibleDefs = colDefs.filter(c => visible.has(c.key));
+  const headerHtml = visibleDefs.map(c => th(tableKey, c.key, c.label, !!c.num)).join('');
+  const bodyHtml = rows.map(r => `<tr>${visibleDefs.map(c => c.cell(r)).join('')}</tr>`).join('');
+
+  // Totals row: leading non-metric columns get the "Overall" label spanned.
+  // Skip when no dims/attrs are visible — the single body row IS the global
+  // aggregate, so a totals row would just duplicate it.
+  let footHtml = '';
+  const firstMetricIdx = visibleDefs.findIndex(c => c.kind === 'metric');
+  const hasNonMetricCols = firstMetricIdx > 0;
+  if (totals && firstMetricIdx >= 0 && hasNonMetricCols) {
+    const labelCell = `<td colspan="${firstMetricIdx}">Overall (filtered)</td>`;
+    const metricCells = visibleDefs.slice(firstMetricIdx).map(c => `<td class="num">${fmt(totals[c.key])}</td>`).join('');
+    footHtml = `<tfoot><tr>${labelCell}${metricCells}</tr></tfoot>`;
+  }
+
+  document.getElementById(targetId).innerHTML = `
     <table>
-      <thead>
-        <tr>
-          ${th('links', 'page_url', 'Page URL')}
-          ${th('links', 'page_name', 'Page Name')}
-          ${th('links', 'link_title', 'Link Label')}
-          ${th('links', 'destination', 'Link Address')}
-          ${th('links', 'destination_normalized', 'Normalized Link')}
-          ${th('links', 'file_name', 'File Name')}
-          ${th('links', 'file_type', 'File Type')}
-          ${th('links', 'total_clicks', 'Total Clicks', true)}
-          ${th('links', 'unique_clicks', 'Unique Clicks', true)}
-          ${th('links', 'downloads', 'Total Downloads', true)}
-        </tr>
-      </thead>
-      <tbody>
-        ${rows.map(r => `
-          <tr>
-            <td class="url" title="${escapeHtml(r.page_url)}">${escapeHtml(r.page_url)}</td>
-            <td>${escapeHtml(r.page_name)}</td>
-            <td class="label" title="${escapeHtml(r.link_title)}">${escapeHtml(r.link_title)}</td>
-            <td class="url"><a href="${escapeAttr(r.destination)}" target="_blank" rel="noopener" title="${escapeHtml(r.destination)}">${escapeHtml(r.destination)}</a></td>
-            <td class="url" title="${escapeHtml(r.destination_normalized)}">${escapeHtml(r.destination_normalized)}</td>
-            <td class="label" title="${escapeHtml(r.file_name || '')}">${escapeHtml(r.file_name || '—')}</td>
-            <td>${escapeHtml(r.file_type || '—')}</td>
-            <td class="num">${fmt(r.total_clicks)}</td>
-            <td class="num">${fmt(r.unique_clicks)}</td>
-            <td class="num">${fmt(r.downloads)}</td>
-          </tr>
-        `).join('')}
-      </tbody>
-      <tfoot>
-        <tr>
-          <td colspan="7">Overall (filtered)</td>
-          <td class="num">${fmt(totals.total_clicks)}</td>
-          <td class="num">${fmt(totals.unique_clicks)}</td>
-          <td class="num">${fmt(totals.downloads)}</td>
-        </tr>
-      </tfoot>
+      <thead><tr>${headerHtml}</tr></thead>
+      <tbody>${bodyHtml}</tbody>
+      ${footHtml}
     </table>`;
 }
 
@@ -1788,7 +2011,6 @@ window.sortBy = function(table, col) {
     s.dir = ['page_name','page_url','url','link_title','destination','file_name','file_type','top_division','top_region'].includes(col) ? 'asc' : 'desc';
   }
   if (table === 'pages')             renderPagesTable();
-  else if (table === 'links')        renderLinksTable();
   else if (table === 'audDownloads') renderTopDownloadsByDivision();
   else if (table === 'audPages')     renderTopPagesByDivision();
 };
@@ -2363,8 +2585,10 @@ window.exportTable = async function(key) {
     setStatus('loading', 'Exporting full result set…');
     try {
       const fullRows = await q(cached.baseQuery);
-      if (key === 'links') {
-        for (const r of fullRows) r.destination_normalized = normalizeSpUrl(r.destination);
+      if (key === 'pages') {
+        for (const r of fullRows) {
+          if ('destination' in r) r.destination_normalized = normalizeSpUrl(r.destination);
+        }
       }
       data = { ...cached, rows: fullRows };
       setStatus('ready', 'Ready');
@@ -2376,23 +2600,27 @@ window.exportTable = async function(key) {
     }
   }
 
+  // For the dynamic-column Pages & Links table, build the spec from the
+  // visible-column metadata captured in lastResults at render time.
+  const DYNAMIC_SPECS = {
+    pages: { sheet: 'Pages & Links',
+             linkCellPredicate: c => c.key === 'url' || c.key === 'destination' || c.key === 'destination_normalized' },
+  };
+  if (DYNAMIC_SPECS[key]) {
+    const dyn = DYNAMIC_SPECS[key];
+    const visibleDefs = (cached.colDefs || []).filter(c => cached.visible && cached.visible.has(c.key));
+    if (!visibleDefs.length) { alert('No columns selected to export.'); return; }
+    const headers = visibleDefs.map(c => c.label);
+    const cols    = visibleDefs.map(c => c.key);
+    const numIdx  = visibleDefs.map((c, i) => c.num ? i : -1).filter(i => i >= 0);
+    const linkIdx = visibleDefs.map((c, i) => dyn.linkCellPredicate(c) ? i : -1).filter(i => i >= 0);
+    // Totals label spans leading non-metric columns
+    const firstMetricIdx = visibleDefs.findIndex(c => c.kind === 'metric');
+    const totalsLabelSpan = firstMetricIdx === -1 ? 0 : firstMetricIdx;
+    var SPEC_DYNAMIC = { sheet: dyn.sheet, headers, cols, numIdx, linkIdx, totalsLabelSpan };
+  }
+
   const SPECS = {
-    pages: {
-      sheet:   'Pages',
-      headers: ['Page Name', 'URL', 'Number of Links Clicked', 'Total Clicks', 'Unique Clicks', 'Total Downloads'],
-      cols:    ['page_name', 'url', 'num_links_clicked', 'total_clicks', 'unique_clicks', 'downloads'],
-      numIdx:  [2, 3, 4, 5],
-      linkIdx: [1],
-      totalsLabelSpan: 2,
-    },
-    links: {
-      sheet:   'Links',
-      headers: ['Page URL', 'Page Name', 'Link Label', 'Link Address', 'Normalized Link', 'File Name', 'File Type', 'Total Clicks', 'Unique Clicks', 'Total Downloads'],
-      cols:    ['page_url', 'page_name', 'link_title', 'destination', 'destination_normalized', 'file_name', 'file_type', 'total_clicks', 'unique_clicks', 'downloads'],
-      numIdx:  [7, 8, 9],
-      linkIdx: [0, 3, 4],
-      totalsLabelSpan: 7,
-    },
     audDownloads: {
       sheet:   'Top Downloads by Division',
       headers: ['File Name', 'File Type', 'Downloads', 'Top Division', 'Top Division Downloads', 'Top Region', 'Top Region Downloads'],
@@ -2410,7 +2638,7 @@ window.exportTable = async function(key) {
       totalsLabelSpan: 0,
     },
   };
-  const SPEC = SPECS[key];
+  const SPEC = DYNAMIC_SPECS[key] ? SPEC_DYNAMIC : SPECS[key];
   if (!SPEC) { alert('Unknown export key: ' + key); return; }
 
   try {
