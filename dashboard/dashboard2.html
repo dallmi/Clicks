@@ -799,6 +799,10 @@ table.heatmap td.cell { font-variant-numeric: tabular-nums; font-weight: 500; }
       <div class="multi-select" id="ms_filterPage"></div>
     </div>
     <div class="filter-group">
+      <label>Page URL</label>
+      <div class="multi-select" id="ms_filterPageUrl"></div>
+    </div>
+    <div class="filter-group">
       <label>File Name</label>
       <div class="multi-select" id="ms_filterFile"></div>
     </div>
@@ -1609,6 +1613,7 @@ async function populateFilterDatalists() {
   // Multi-select dropdowns — top row + advanced row, all behave the same
   multiSelects.site   = new MultiSelect('ms_filterSite',   { placeholder: 'All sites',          onChange: debounceRender });
   multiSelects.page   = new MultiSelect('ms_filterPage',   { placeholder: 'All pages',          onChange: debounceRender });
+  multiSelects.pageUrl = new MultiSelect('ms_filterPageUrl',{ placeholder: 'All page URLs',      onChange: debounceRender });
   multiSelects.link   = new MultiSelect('ms_filterLink',   { placeholder: 'All link labels',    onChange: debounceRender });
   multiSelects.topic  = new MultiSelect('ms_filterTopic',  { placeholder: 'All topics',         onChange: debounceRender });
   multiSelects.theme  = new MultiSelect('ms_filterTheme',  { placeholder: 'All themes',         onChange: debounceRender });
@@ -1616,9 +1621,10 @@ async function populateFilterDatalists() {
   multiSelects.region = new MultiSelect('ms_filterRegion', { placeholder: 'All target regions', onChange: debounceRender });
   multiSelects.file   = new MultiSelect('ms_filterFile',   { placeholder: 'All files',          onChange: debounceRender });
 
-  const [siteVals, pageVals, linkVals, topicVals, themeVals, orgVals, regionVals, fileVals] = await Promise.all([
+  const [siteVals, pageVals, pageUrlVals, linkVals, topicVals, themeVals, orgVals, regionVals, fileVals] = await Promise.all([
     loadDistinctValues(columns.site,         2000),
     loadDistinctValues(columns.pageName,    10000),
+    loadDistinctValues(columns.pageUrl,     10000),
     loadDistinctValues(columns.linkLabel,   10000),
     loadDistinctValues(columns.topic,        2000),
     loadDistinctValues(columns.theme,         100),
@@ -1628,6 +1634,7 @@ async function populateFilterDatalists() {
   ]);
   multiSelects.site.setOptions(siteVals);
   multiSelects.page.setOptions(pageVals);
+  multiSelects.pageUrl.setOptions(pageUrlVals);
   multiSelects.link.setOptions(linkVals);
   multiSelects.topic.setOptions(topicVals);
   multiSelects.theme.setOptions(themeVals);
@@ -1653,6 +1660,7 @@ function getFilterClauses() {
   let w = '';
   w += inClause(columns.site,         ms('site'));
   w += inClause(columns.pageName,     ms('page'));
+  w += inClause(columns.pageUrl,      ms('pageUrl'));
   w += inClause(columns.linkLabel,    ms('link'));
   w += inClause(columns.topic,        ms('topic'));
   w += inClause(columns.theme,        ms('theme'));
