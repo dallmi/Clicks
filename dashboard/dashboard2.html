@@ -6,6 +6,7 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
 <title>Click-Tracking Dashboard</title>
 
+<script>window.__EVENTS_B64__=null;</script>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script type="module">
@@ -1522,9 +1523,25 @@ async function init() {
   }
 }
 
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 async function loadParquet() {
-  // Fetch the parquet ourselves and register it as an in-memory file in
-  // DuckDB-WASM's virtual filesystem. Avoids depending on HTTP Range
+  // Standalone mode: the parquet is baked into the file as base64, so the
+  // dashboard runs from file:// with no server (SharePoint distribution).
+  if (window.__EVENTS_B64__) {
+    setLoadingText('Loading embedded data…');
+    await db.registerFileBuffer('events_raw.parquet', b64ToBytes(window.__EVENTS_B64__));
+    await conn.query(`CREATE OR REPLACE VIEW events AS SELECT * FROM read_parquet('events_raw.parquet')`);
+    return;
+  }
+
+  // Dev mode: fetch the parquet ourselves and register it as an in-memory file
+  // in DuckDB-WASM's virtual filesystem. Avoids depending on HTTP Range
   // support (Python's http.server doesn't support it).
   const base = window.location.origin + window.location.pathname.replace(/\/[^\/]*$/, '');
   const candidates = [

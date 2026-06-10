@@ -10,6 +10,9 @@ data/*.db.wal
 # Output files
 output/*.parquet
 
+# Standalone dashboard build (embeds the events data — keep local only)
+output/*standalone*.html
+
 # Python
 __pycache__/
 *.pyc
