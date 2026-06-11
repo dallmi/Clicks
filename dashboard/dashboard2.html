@@ -483,6 +483,16 @@ thead th.sorted .th-label::after {
 }
 thead th.sorted.asc .th-label::after { content: ' ▴'; }
 .th-label { display: inline-block; pointer-events: none; }
+.th-sub {
+  display: block;
+  pointer-events: none;
+  font-size: 0.6rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--medium-gray);
+  margin-top: 1px;
+}
 .col-resize {
   position: absolute;
   top: 0; right: 0;
@@ -1417,10 +1427,10 @@ function buildPagesColDefs() {
     { key: 'total_clicks', label: 'Total Clicks', kind: 'metric', sortable: true, num: true,
       selectSql: `COUNT(*)`,
       cell: r => `<td class="num">${fmt(r.total_clicks)}</td>` },
-    { key: 'unique_clicks', label: 'Unique Clicks', kind: 'metric', sortable: true, num: true,
+    { key: 'unique_clicks', label: 'Unique Clicks', sub: 'unique user × link', kind: 'metric', sortable: true, num: true,
       selectSql: `COUNT(DISTINCT (${columns.gpn} || '|' || COALESCE(${columns.linkAddress}, '')))`,
       cell: r => `<td class="num">${fmt(r.unique_clicks)}</td>` },
-    { key: 'distinct_clickers', label: 'Unique Clickers', kind: 'metric', sortable: true, num: true,
+    { key: 'distinct_clickers', label: 'Unique Clickers', sub: 'distinct users', kind: 'metric', sortable: true, num: true,
       selectSql: `COUNT(DISTINCT ${columns.gpn})`,
       cell: r => `<td class="num">${fmt(r.distinct_clickers)}</td>` },
     { key: 'downloads', label: 'Total Downloads', kind: 'metric', sortable: true, num: true,
@@ -1955,7 +1965,7 @@ async function renderGenericTable({ tableKey, targetId, metaId, colDefs, visible
   document.getElementById(metaId).textContent = `Top ${rows.length}`;
 
   const visibleDefs = colDefs.filter(c => visible.has(c.key));
-  const headerHtml = visibleDefs.map(c => th(tableKey, c.key, c.label, !!c.num)).join('');
+  const headerHtml = visibleDefs.map(c => th(tableKey, c.key, c.label, !!c.num, c.sub)).join('');
   const bodyHtml = rows.map(r => `<tr>${visibleDefs.map(c => c.cell(r)).join('')}</tr>`).join('');
 
   // Totals row: leading non-metric columns get the "Overall" label spanned.
@@ -1978,10 +1988,11 @@ async function renderGenericTable({ tableKey, targetId, metaId, colDefs, visible
     </table>`;
 }
 
-function th(table, col, label, isNum) {
+function th(table, col, label, isNum, sub) {
   const s = sortState[table];
   const cls = (s.col === col ? 'sorted ' + s.dir : '') + (isNum ? ' num' : '');
-  return `<th class="${cls}" onclick="sortBy('${table}','${col}')"><span class="th-label">${label}</span><span class="col-resize" onmousedown="startColResize(event)"></span></th>`;
+  const subHtml = sub ? `<span class="th-sub">${escapeHtml(sub)}</span>` : '';
+  return `<th class="${cls}" onclick="sortBy('${table}','${col}')"><span class="th-label">${label}</span>${subHtml}<span class="col-resize" onmousedown="startColResize(event)"></span></th>`;
 }
 
 window.startColResize = function(e) {
