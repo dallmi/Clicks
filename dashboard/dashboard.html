@@ -1789,8 +1789,8 @@ async function renderKPIs() {
     card('',        'Number of Pages',         r.pages),
     card('info',    'Number of Links Clicked', r.links,         'distinct link targets'),
     card('',        'Total Clicks',            r.total_clicks),
-    card('success', 'Unique Clicks',           r.unique_clicks,    'distinct user × link'),
-    card('info',    'Distinct Clickers',       r.distinct_clickers, 'distinct GPNs with ≥1 click'),
+    card('success', 'Unique Clicks',           r.unique_clicks,    'unique user × link'),
+    card('info',    'Unique Clickers',         r.distinct_clickers, 'distinct users with ≥1 click'),
     card('warning', 'Total Downloads',         r.downloads,        'events with file type')
   ].join('');
 }
