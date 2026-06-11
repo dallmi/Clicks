@@ -1420,7 +1420,7 @@ function buildPagesColDefs() {
     { key: 'unique_clicks', label: 'Unique Clicks', kind: 'metric', sortable: true, num: true,
       selectSql: `COUNT(DISTINCT (${columns.gpn} || '|' || COALESCE(${columns.linkAddress}, '')))`,
       cell: r => `<td class="num">${fmt(r.unique_clicks)}</td>` },
-    { key: 'distinct_clickers', label: 'Distinct Clickers', kind: 'metric', sortable: true, num: true,
+    { key: 'distinct_clickers', label: 'Unique Clickers', kind: 'metric', sortable: true, num: true,
       selectSql: `COUNT(DISTINCT ${columns.gpn})`,
       cell: r => `<td class="num">${fmt(r.distinct_clickers)}</td>` },
     { key: 'downloads', label: 'Total Downloads', kind: 'metric', sortable: true, num: true,
