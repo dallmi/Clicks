@@ -3,7 +3,7 @@
 Synthetic dashboard seed-data generator.
 
 Produces `output/events_raw.parquet` directly with the exact schema the
-dashboards (`dashboard/dashboard.html`, `dashboard/dashboard2.html`) read,
+dashboard (`dashboard/dashboard.html`) reads,
 so you can demo / visualise the dashboard without running the full
 process_clicks.py pipeline (which needs real KQL exports + an external
 hr_history.parquet).

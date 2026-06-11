@@ -1,6 +1,6 @@
 # Standalone Click-Tracking Dashboard (SharePoint distribution)
 
-A single self-contained HTML build of `dashboard2.html` that runs from a downloaded
+A single self-contained HTML build of `dashboard.html` that runs from a downloaded
 file — **no Python server required**. For sharing via SharePoint without IT / app-catalog
 involvement.
 
@@ -10,7 +10,7 @@ and ExcelJS from local vendored copies. DuckDB-WASM stays a runtime CDN load fro
 
 ## The two modes — one template
 
-`dashboard/dashboard2.html` runs in both modes via a loader shim:
+`dashboard/dashboard.html` runs in both modes via a loader shim:
 
 - **Dev mode** (served over http, e.g. `python3 -m http.server`): `window.__EVENTS_B64__`
   is `null`, so it `fetch()`es `output/events_raw.parquet`.
@@ -26,7 +26,7 @@ and ExcelJS from local vendored copies. DuckDB-WASM stays a runtime CDN load fro
 python3 scripts/build_standalone.py
 ```
 
-Defaults: `--events output/events_raw.parquet`, `--template dashboard/dashboard2.html`,
+Defaults: `--events output/events_raw.parquet`, `--template dashboard/dashboard.html`,
 `--months 0` (keep all data), output `output/click_dashboard_standalone.html`. The build
 prints the row count, embedded parquet size and final file size, and warns above 8 MB.
 
@@ -43,7 +43,7 @@ curl -sS -o dashboard/vendor/exceljs.min.js   https://cdn.jsdelivr.net/npm/excel
 curl -sS -o dashboard/vendor/chart.umd.min.js https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js
 ```
 
-(Keep the versions in sync with the CDN `<script>` tags in `dashboard2.html`.)
+(Keep the versions in sync with the CDN `<script>` tags in `dashboard.html`.)
 
 ## How users open it
 

@@ -142,7 +142,7 @@ def main(argv=None):
     ap.add_argument("--events", type=Path, default=here / "output" / "events_raw.parquet",
                     help="path to events_raw.parquet (defaults to pipeline output)")
     ap.add_argument("--template", type=Path,
-                    default=here / "dashboard" / "dashboard2.html")
+                    default=here / "dashboard" / "dashboard.html")
     ap.add_argument("--vendor", type=Path, default=here / "dashboard" / "vendor")
     ap.add_argument("--months", type=int, default=0,
                     help="keep only the last N months of data (0 = all)")
