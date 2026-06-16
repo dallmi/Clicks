@@ -1434,7 +1434,7 @@ class ColumnPicker {
 const columnPickers = {};
 
 function setupColumnPickers() {
-  const pagesCols = buildPagesColDefs();
+  const pagesCols = buildPagesColDefs().filter(c => !c.hidden);
   columnPickers.pages = new ColumnPicker('cp_pages', {
     columns: pagesCols.map(c => ({ key: c.key, label: c.label, kind: c.kind })),
     visible: PAGES_DEFAULT_VISIBLE,
@@ -1459,7 +1459,11 @@ function buildPagesColDefs() {
     // ---- Dimensions (GROUP BY) ----
     { key: 'page_name',  label: 'Page Name', kind: 'dim', sortable: true,
       selectSql: `COALESCE(${pageCol}, '(unknown)')`,
-      cell: r => `<td>${escapeHtml(r.page_name)}</td>` },
+      cell: r => `<td title="${escapeHtml(r._url_tip || r.url || r.page_name)}">${escapeHtml(r.page_name)}</td>` },
+    // Hidden helper: a representative page URL for each row, always selected so
+    // the Page Name cell can show it on hover even when the URL column is off.
+    { key: '_url_tip', kind: 'attr', hidden: true, always: true,
+      selectSql: `MAX(${urlCol})` },
     { key: 'url',        label: 'Page URL',  kind: 'dim', sortable: true,
       selectSql: `COALESCE(${urlCol}, '')`,
       cell: r => `<td class="url" title="${escapeHtml(r.url)}">${escapeHtml(r.url)}</td>` },
@@ -1521,7 +1525,7 @@ function buildSelectGroupBy(colDefs, visible) {
       includedKeys.add(c.key);
       i++;
     } else if (c.kind === 'attr') {
-      if (!visible.has(c.key)) continue;
+      if (!c.always && !visible.has(c.key)) continue;
       selectParts.push(`${c.selectSql} AS ${c.key}`);
       includedKeys.add(c.key);
       i++;
