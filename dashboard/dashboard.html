@@ -1276,9 +1276,23 @@ class ColumnPicker {
 
   positionPopover() {
     const r = this.triggerEl.getBoundingClientRect();
-    // Anchor below the trigger, right-aligned to it, clamped to the viewport
-    this.popoverEl.style.top   = `${r.bottom + 2}px`;
-    this.popoverEl.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+    const margin = 8;
+    const spaceBelow = window.innerHeight - r.bottom - margin;
+    const spaceAbove = r.top - margin;
+    // Flip upward when there's noticeably more room above than below.
+    const flipUp = spaceBelow < 240 && spaceAbove > spaceBelow;
+    const avail = Math.max(160, flipUp ? spaceAbove : spaceBelow);
+    // Cap height to the available viewport space so the inner list stays
+    // scrollable instead of overflowing off-screen (fixed position can't scroll).
+    this.popoverEl.style.maxHeight = `${Math.min(420, avail)}px`;
+    if (flipUp) {
+      this.popoverEl.style.top    = 'auto';
+      this.popoverEl.style.bottom = `${Math.max(margin, window.innerHeight - r.top + 2)}px`;
+    } else {
+      this.popoverEl.style.bottom = 'auto';
+      this.popoverEl.style.top    = `${r.bottom + 2}px`;
+    }
+    this.popoverEl.style.right = `${Math.max(margin, window.innerWidth - r.right)}px`;
     this.popoverEl.style.left  = 'auto';
   }
 
