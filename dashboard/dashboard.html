@@ -2046,7 +2046,11 @@ async function renderRankChart() {
     datasets: [{
       label: metricLabel,
       data: values,
-      backgroundColor: rankDir === 'top' ? 'rgba(230,0,0,0.82)' : 'rgba(122,120,112,0.78)',
+      // Brand warm grays (matching the Audience bar charts) — Gray VI for the
+      // dominant "Top" view, lighter Gray II for "Bottom". No corporate red on
+      // chart data, per branding.
+      backgroundColor: rankDir === 'top' ? '#404040' : '#B8B3A2',
+      hoverBackgroundColor: rankDir === 'top' ? '#5A5D5C' : '#8E8D83',
       borderWidth: 0,
       borderRadius: 2,
       barThickness: 'flex',
