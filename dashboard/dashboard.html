@@ -2020,13 +2020,17 @@ async function renderRankChart() {
   const dimExpr = rankGran === 'links'
     ? `COALESCE(NULLIF(${columns.linkLabel || 'NULL'}, ''), ${columns.linkAddress}, '(no link)')`
     : `COALESCE(${columns.pageName || columns.pageUrl}, '(unknown)')`;
+  // Detail shown on hover: the page URL (pages) or the link address (links).
+  const detailExpr = rankGran === 'links'
+    ? `MAX(${columns.linkAddress})`
+    : `MAX(${columns.pageUrl || columns.pageName})`;
   const metricSql = (RANK_METRIC_SQL[rankMetric] || RANK_METRIC_SQL.total_clicks)();
   const asc = rankDir === 'bottom';
   // Bottom: only genuinely-active rows (value > 0) — avoids a wall of ties at 0.
   const having = asc ? `HAVING ${metricSql} > 0` : '';
 
   const rows = await q(`
-    SELECT ${dimExpr} AS label, ${metricSql} AS value
+    SELECT ${dimExpr} AS label, ${detailExpr} AS detail, ${metricSql} AS value
     FROM events ${w}
     GROUP BY 1
     ${having}
@@ -2042,6 +2046,7 @@ async function renderRankChart() {
   document.getElementById('rankChartWrap').style.height = `${Math.max(180, rows.length * 28 + 70)}px`;
 
   const labels = rows.map(r => r.label);
+  const details = rows.map(r => r.detail || '');
   const values = rows.map(r => Number(r.value));
   const trunc = s => (s && s.length > 60) ? s.slice(0, 57) + '…' : (s || '');
 
@@ -2073,6 +2078,7 @@ async function renderRankChart() {
         callbacks: {
           title: items => labels[items[0]?.dataIndex] || '',
           label: ctx => `${metricLabel}: ${Number(ctx.parsed.x).toLocaleString('en-US')}`,
+          afterLabel: ctx => { const d = details[ctx.dataIndex]; return d ? `↳ ${d}` : ''; },
         },
       },
     },
