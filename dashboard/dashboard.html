@@ -650,6 +650,19 @@ tfoot td {
 .metric-toggle button:hover { background: var(--surface); color: var(--dark-gray); }
 .metric-toggle button.active { background: var(--primary); color: var(--white); }
 
+.rank-select {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.72rem;
+  font-family: inherit;
+  color: var(--dark-gray);
+  background: var(--white);
+  border: 1px solid var(--light-gray);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.rank-select:hover { border-color: var(--medium-gray); }
+#rankChartWrap { height: 340px; }
+
 .audience-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -873,6 +886,35 @@ table.heatmap td.cell { font-variant-numeric: tabular-nums; font-weight: 500; }
           </div>
         </div>
         <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <div class="section-title">Top / Bottom Ranking</div>
+          <div class="section-actions">
+            <div class="metric-toggle" id="rankGranToggle">
+              <button class="active" data-gran="pages" onclick="setRankGran('pages')">Pages</button>
+              <button data-gran="links" onclick="setRankGran('links')">Links</button>
+            </div>
+            <div class="metric-toggle" id="rankDirToggle">
+              <button class="active" data-dir="top" onclick="setRankDir('top')">Top</button>
+              <button data-dir="bottom" onclick="setRankDir('bottom')">Bottom</button>
+            </div>
+            <select class="rank-select" id="rankMetricSelect" onchange="setRankMetric(this.value)">
+              <option value="total_clicks">Total Clicks</option>
+              <option value="unique_clicks">Unique Clicks</option>
+              <option value="distinct_clickers">Unique Clickers</option>
+              <option value="downloads">Total Downloads</option>
+            </select>
+            <select class="rank-select" id="rankNSelect" onchange="setRankN(this.value)">
+              <option value="5">Top 5</option>
+              <option value="10" selected>Top 10</option>
+              <option value="20">Top 20</option>
+            </select>
+            <span class="section-meta" id="rankMeta"></span>
+          </div>
+        </div>
+        <div class="chart-wrap" id="rankChartWrap"><canvas id="rankChart"></canvas></div>
       </div>
 
       <div class="section">
@@ -1727,7 +1769,7 @@ async function renderAll() {
   setStatus('loading', 'Querying…');
   try {
     if (activeTab === 'tabPagesLinks') {
-      await Promise.all([renderKPIs(), renderTrendChart(), renderPagesTable()]);
+      await Promise.all([renderKPIs(), renderTrendChart(), renderRankChart(), renderPagesTable()]);
       pagesLinksDirty = false;
       audienceDirty = true;
     } else if (activeTab === 'tabAudience') {
@@ -1754,11 +1796,42 @@ window.switchTab = function(tabId) {
       .catch(err => { console.error(err); setStatus('error', err.message); });
   } else if (tabId === 'tabPagesLinks' && pagesLinksDirty) {
     setStatus('loading', 'Querying…');
-    Promise.all([renderKPIs(), renderTrendChart(), renderPagesTable()])
+    Promise.all([renderKPIs(), renderTrendChart(), renderRankChart(), renderPagesTable()])
       .then(() => { pagesLinksDirty = false; setStatus('ready', getRefreshLabel()); })
       .catch(err => { console.error(err); setStatus('error', err.message); });
   }
 };
+
+let rankGran = 'pages';      // 'pages' | 'links'
+let rankDir = 'top';         // 'top' | 'bottom'
+let rankMetric = 'total_clicks';
+let rankN = 10;
+
+window.setRankGran = function(g) {
+  if (g === rankGran) return;
+  rankGran = g;
+  document.querySelectorAll('#rankGranToggle button').forEach(b => b.classList.toggle('active', b.dataset.gran === g));
+  renderRankChart();
+};
+window.setRankDir = function(d) {
+  if (d === rankDir) return;
+  rankDir = d;
+  document.querySelectorAll('#rankDirToggle button').forEach(b => b.classList.toggle('active', b.dataset.dir === d));
+  syncRankNLabels();
+  renderRankChart();
+};
+window.setRankMetric = function(m) {
+  rankMetric = m;
+  renderRankChart();
+};
+window.setRankN = function(n) {
+  rankN = parseInt(n, 10) || 10;
+  renderRankChart();
+};
+function syncRankNLabels() {
+  const prefix = rankDir === 'top' ? 'Top' : 'Bottom';
+  document.querySelectorAll('#rankNSelect option').forEach(o => { o.textContent = `${prefix} ${o.value}`; });
+}
 
 window.setAudMetric = function(m) {
   if (m === audMetric) return;
@@ -1899,6 +1972,113 @@ async function renderTrendChart() {
   } else {
     trendChartInstance = new Chart(canvas.getContext('2d'), { type: 'line', data, options });
   }
+}
+
+let rankChartInstance = null;
+
+const RANK_METRIC_SQL = {
+  total_clicks:      () => `COUNT(*)`,
+  unique_clicks:     () => `COUNT(DISTINCT (${columns.gpn} || '|' || COALESCE(${columns.linkAddress}, '')))`,
+  distinct_clickers: () => `COUNT(DISTINCT ${columns.gpn})`,
+  downloads:         () => dlExpr(),
+};
+const RANK_METRIC_LABEL = {
+  total_clicks: 'Total Clicks', unique_clicks: 'Unique Clicks',
+  distinct_clickers: 'Unique Clickers', downloads: 'Total Downloads',
+};
+
+// Draws the numeric value at the end of each horizontal bar (no plugin dep).
+const rankValueLabels = {
+  id: 'rankValueLabels',
+  afterDatasetsDraw(chart) {
+    const { ctx } = chart;
+    const meta = chart.getDatasetMeta(0);
+    if (!meta || !meta.data) return;
+    ctx.save();
+    ctx.font = '600 11px system-ui, sans-serif';
+    ctx.fillStyle = '#404040';
+    ctx.textBaseline = 'middle';
+    meta.data.forEach((bar, i) => {
+      const v = chart.data.datasets[0].data[i];
+      if (v == null) return;
+      ctx.textAlign = 'left';
+      ctx.fillText(Number(v).toLocaleString('en-US'), bar.x + 6, bar.y);
+    });
+    ctx.restore();
+  },
+};
+
+async function renderRankChart() {
+  const canvas = document.getElementById('rankChart');
+  if (!canvas || typeof Chart === 'undefined') return;
+
+  const w = whereClause();
+  const dimExpr = rankGran === 'links'
+    ? `COALESCE(NULLIF(${columns.linkLabel || 'NULL'}, ''), ${columns.linkAddress}, '(no link)')`
+    : `COALESCE(${columns.pageName || columns.pageUrl}, '(unknown)')`;
+  const metricSql = (RANK_METRIC_SQL[rankMetric] || RANK_METRIC_SQL.total_clicks)();
+  const asc = rankDir === 'bottom';
+  // Bottom: only genuinely-active rows (value > 0) — avoids a wall of ties at 0.
+  const having = asc ? `HAVING ${metricSql} > 0` : '';
+
+  const rows = await q(`
+    SELECT ${dimExpr} AS label, ${metricSql} AS value
+    FROM events ${w}
+    GROUP BY 1
+    ${having}
+    ORDER BY value ${asc ? 'ASC' : 'DESC'}, label
+    LIMIT ${rankN}
+  `);
+
+  const metricLabel = RANK_METRIC_LABEL[rankMetric] || 'Value';
+  document.getElementById('rankMeta').textContent =
+    rows.length ? `${rankDir === 'top' ? 'Top' : 'Bottom'} ${rows.length} ${rankGran} by ${metricLabel}` : 'no data';
+
+  // Grow the chart height with the number of bars so labels stay readable.
+  document.getElementById('rankChartWrap').style.height = `${Math.max(180, rows.length * 28 + 70)}px`;
+
+  const labels = rows.map(r => r.label);
+  const values = rows.map(r => Number(r.value));
+  const trunc = s => (s && s.length > 60) ? s.slice(0, 57) + '…' : (s || '');
+
+  const data = {
+    labels,
+    datasets: [{
+      label: metricLabel,
+      data: values,
+      backgroundColor: rankDir === 'top' ? 'rgba(230,0,0,0.82)' : 'rgba(122,120,112,0.78)',
+      borderWidth: 0,
+      borderRadius: 2,
+      barThickness: 'flex',
+      maxBarThickness: 22,
+    }],
+  };
+
+  const options = {
+    indexAxis: 'y',
+    responsive: true,
+    maintainAspectRatio: false,
+    layout: { padding: { right: 48 } },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          title: items => labels[items[0]?.dataIndex] || '',
+          label: ctx => `${metricLabel}: ${Number(ctx.parsed.x).toLocaleString('en-US')}`,
+        },
+      },
+    },
+    scales: {
+      x: { beginAtZero: true,
+           ticks: { callback: v => Number(v).toLocaleString('en-US'), font: { size: 10 } },
+           grid: { color: '#ECEBE4' } },
+      y: { ticks: { font: { size: 10 }, callback: function(v) { return trunc(this.getLabelForValue(v)); }, autoSkip: false },
+           grid: { display: false } },
+    },
+  };
+
+  if (rankChartInstance) rankChartInstance.destroy();
+  rankChartInstance = new Chart(canvas.getContext('2d'), { type: 'bar', data, options, plugins: [rankValueLabels] });
 }
 
 async function renderPagesTable() {
