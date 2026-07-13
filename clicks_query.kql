@@ -268,9 +268,9 @@ customEvents
 | where tostring(CP.PageStatus) == "Published"
 | where tostring(CP.Link_address) contains LinkFilter
 | summarize
-    Clicks      = count(),
-    UniqueUsers = dcount(user_Id),
-    Targets     = dcount(tostring(CP.Link_address))
+    Clicks         = count(),
+    UniqueClickers = dcount(tostring(CP.GPN)),   // distinct persons (GPN) — matches dashboard "Unique Clickers"
+    Targets        = dcount(tostring(CP.Link_address))
     by
     PageURL     = tostring(CP.PageURL),
     PageName    = tostring(CP.PageName)
@@ -290,8 +290,8 @@ customEvents
 | where tostring(CP.PageStatus) == "Published"
 | where tostring(CP.Link_address) contains LinkFilter
 | summarize
-    Clicks      = count(),
-    UniqueUsers = dcount(user_Id)
+    Clicks         = count(),
+    UniqueClickers = dcount(tostring(CP.GPN))   // distinct persons (GPN) — matches dashboard "Unique Clickers"
     by
     PageURL     = tostring(CP.PageURL),
     TargetURL   = tostring(CP.Link_address)
