@@ -1303,8 +1303,14 @@ class ColumnPicker {
       });
       // Close any open popover when the page scrolls or window resizes —
       // the fixed-position anchor would otherwise drift away from the trigger.
-      window.addEventListener('scroll', () => {
-        ColumnPicker.instances.forEach(cp => { if (cp.open) cp.toggleOpen(false); });
+      // Capture phase means this also fires for scrolls *inside* the popover's
+      // own list, so skip those: only an outer/page scroll should close it.
+      window.addEventListener('scroll', (e) => {
+        ColumnPicker.instances.forEach(cp => {
+          if (cp.open && !(e.target instanceof Node && cp.popoverEl.contains(e.target))) {
+            cp.toggleOpen(false);
+          }
+        });
       }, true);
       window.addEventListener('resize', () => {
         ColumnPicker.instances.forEach(cp => { if (cp.open) cp.toggleOpen(false); });
