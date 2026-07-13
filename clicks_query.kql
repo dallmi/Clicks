@@ -250,3 +250,49 @@ customEvents
     CP_Video_PlayedTime     = tostring(CP.Video_PlayedTime),
     CP_Video_Address        = tostring(CP.Video_Address)
 | order by ['timestamp [UTC]'] desc
+
+
+// --- QUERY F: Source pages driving clicks to a target link ---
+// One row per source PageURL: how many clicks went from that page to a
+// link whose target matches LinkFilter. Answers "which pages send traffic
+// to <target>?". Sorted by click volume.
+//   Clicks      = number of clicks from this page to a matching target
+//   UniqueUsers = distinct users who made those clicks
+//   Targets     = number of DISTINCT matching target URLs clicked from this page
+// Time range comes from the App Insights UI time picker.
+set truncationmaxrecords = 500000;
+let LinkFilter = "we-are-ubs";  // substring of the target link
+customEvents
+| where name == "click_event"
+| extend CP = todynamic(tostring(todynamic(customDimensions).CustomProps))
+| where tostring(CP.PageStatus) == "Published"
+| where tostring(CP.Link_address) contains LinkFilter
+| summarize
+    Clicks      = count(),
+    UniqueUsers = dcount(user_Id),
+    Targets     = dcount(tostring(CP.Link_address))
+    by
+    PageURL     = tostring(CP.PageURL),
+    PageName    = tostring(CP.PageName)
+| order by Clicks desc
+
+
+// --- QUERY G: Source page -> target link pairs ---
+// One row per (source PageURL, target URL) pair for links matching
+// LinkFilter. Finer than QUERY F: shows exactly which target was clicked
+// from which page. Sorted by click volume.
+// Time range comes from the App Insights UI time picker.
+set truncationmaxrecords = 500000;
+let LinkFilter = "we-are-ubs";  // substring of the target link
+customEvents
+| where name == "click_event"
+| extend CP = todynamic(tostring(todynamic(customDimensions).CustomProps))
+| where tostring(CP.PageStatus) == "Published"
+| where tostring(CP.Link_address) contains LinkFilter
+| summarize
+    Clicks      = count(),
+    UniqueUsers = dcount(user_Id)
+    by
+    PageURL     = tostring(CP.PageURL),
+    TargetURL   = tostring(CP.Link_address)
+| order by Clicks desc
