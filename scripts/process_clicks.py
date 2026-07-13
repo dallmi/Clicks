@@ -412,6 +412,34 @@ def upsert_data(con, temp_table='temp_import'):
         log("  Created new events_raw table")
         return
 
+    # --- Reconcile schema drift ---
+    # events_raw persists across runs (delta accumulator), but the App Insights
+    # export columns can change between runs (e.g. new CP_Video_* fields added).
+    # A positional `INSERT ... SELECT *` breaks the moment the column set differs
+    # ("table has N columns but M values were supplied"), so we match by NAME:
+    #   1. Add any incoming columns that events_raw doesn't have yet (NULL for
+    #      all existing/historical rows).
+    #   2. INSERT ... BY NAME, which maps on column name and fills any events_raw
+    #      columns absent from this file with NULL.
+    existing = {r['column_name']: r['column_type']
+                for _, r in con.execute("DESCRIBE events_raw").df().iterrows()}
+    incoming = {r['column_name']: r['column_type']
+                for _, r in con.execute(f"DESCRIBE {temp_table}").df().iterrows()}
+
+    added = []
+    for col, typ in incoming.items():
+        if col not in existing:
+            con.execute(f'ALTER TABLE events_raw ADD COLUMN "{col}" {typ}')
+            added.append(col)
+    if added:
+        log(f"  Schema drift: added {len(added)} new column(s) to events_raw "
+            f"(NULL for existing rows): {', '.join(added)}")
+
+    absent = [c for c in existing if c not in incoming]
+    if absent:
+        log(f"  Schema drift: {len(absent)} events_raw column(s) not in this file "
+            f"(NULL for new rows): {', '.join(absent)}")
+
     before_count = con.execute("SELECT COUNT(*) as n FROM events_raw").df()['n'][0]
 
     con.execute(f"""
@@ -428,7 +456,7 @@ def upsert_data(con, temp_table='temp_import'):
     deleted_count = before_count - con.execute("SELECT COUNT(*) as n FROM events_raw").df()['n'][0]
 
     con.execute(f"""
-        INSERT INTO events_raw
+        INSERT INTO events_raw BY NAME
         SELECT * FROM {temp_table}
     """)
 
