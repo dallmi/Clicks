@@ -197,3 +197,56 @@ customEvents
     CP_Video_PlayedTime     = tostring(CP.Video_PlayedTime),
     CP_Video_Address        = tostring(CP.Video_Address)
 | order by ['timestamp [UTC]'] desc
+
+
+// --- QUERY E: Filter by target link / URL (change LinkFilter value) ---
+// Extract clicks whose DESTINATION url matches LinkFilter, regardless of
+// which page the click came from. Matches against CP.Link_address (the
+// clicked link's target) with a case-insensitive substring `contains`.
+// No PageURL filter here — set LinkFilter to a fragment of the target link.
+// Time range comes from the App Insights UI time picker.
+set truncationmaxrecords = 500000;
+let LinkFilter = "we-are-ubs";  // substring of the target link; "" = all
+customEvents
+| where name == "click_event"
+| extend CP = todynamic(tostring(todynamic(customDimensions).CustomProps))
+| where tostring(CP.PageStatus) == "Published"
+| where LinkFilter == "" or tostring(CP.Link_address) contains LinkFilter
+| project
+    ['timestamp [UTC]']     = format_datetime(timestamp, 'dd/MM/yyyy HH:mm:ss.fffffff'),
+    name,
+    user_Id,
+    session_Id,
+    client_CountryOrRegion,
+    CP_SiteID               = tostring(CP.SiteID),
+    CP_SiteName             = tostring(CP.SiteName),
+    CP_PageId               = tostring(CP.PageId),
+    CP_PageName             = tostring(CP.PageName),
+    CP_PageURL              = tostring(CP.PageURL),
+    CP_PageStatus           = tostring(CP.PageStatus),
+    CP_ContentType          = tostring(CP.ContentType),
+    CP_ContentOwner         = tostring(CP.ContentOwner),
+    CP_ComponentName        = tostring(CP.ComponentName),
+    CP_GPN                  = tostring(CP.GPN),
+    CP_Email                = tostring(CP.Email),
+    CP_Link_Type            = tostring(CP.Link_Type),
+    CP_Link_label           = tostring(CP.Link_label),
+    CP_Link_address         = tostring(CP.Link_address),
+    CP_Link_ancestors       = tostring(CP.Link_ancestors),
+    CP_FileType_Label       = tostring(CP.FileType_Label),
+    CP_FileName_Label       = tostring(CP.FileName_Label),
+    CP_NewsCategory         = tostring(CP.NewsCategory),
+    CP_PublishingDate       = tostring(CP.PublishingDate),
+    CP_Topic                = tostring(CP.Topic),
+    CP_Theme                = tostring(CP.Theme),
+    CP_TargetOrg            = tostring(CP.TargetOrg),
+    CP_TargetRegion         = tostring(CP.TargetRegion),
+    CP_mfLst                = tostring(CP.mfLst),
+    CP_Video_Action         = tostring(CP.Video_Action),
+    CP_Video_Id             = tostring(CP.Video_Id),
+    CP_Video_Title          = tostring(CP.Video_Title),
+    CP_Video_Type           = tostring(CP.Video_Type),
+    CP_Video_Duration       = tostring(CP.Video_Duration),
+    CP_Video_PlayedTime     = tostring(CP.Video_PlayedTime),
+    CP_Video_Address        = tostring(CP.Video_Address)
+| order by ['timestamp [UTC]'] desc
