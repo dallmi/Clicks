@@ -279,8 +279,10 @@ customEvents
 
 // --- QUERY G: Source page -> target link pairs ---
 // One row per (source PageURL, target URL) pair for links matching
-// LinkFilter. Finer than QUERY F: shows exactly which target was clicked
-// from which page. Sorted by click volume.
+// LinkFilter, OR whose link label is the "share your story" CTA (EN/DE) —
+// this catches that CTA even when its target URL doesn't match LinkFilter.
+// Finer than QUERY F: shows exactly which target was clicked from which
+// page. Sorted by click volume.
 // Time range comes from the App Insights UI time picker.
 set truncationmaxrecords = 500000;
 let LinkFilter = "we-are-ubs";  // substring of the target link
@@ -289,6 +291,8 @@ customEvents
 | extend CP = todynamic(tostring(todynamic(customDimensions).CustomProps))
 | where tostring(CP.PageStatus) == "Published"
 | where tostring(CP.Link_address) contains LinkFilter
+    or tostring(CP.Link_label) contains "share your story"
+    or tostring(CP.Link_label) contains "Teilt eure Story"
 | summarize
     Clicks         = count(),
     UniqueClickers = dcount(tostring(CP.GPN))   // distinct persons (GPN) — matches dashboard "Unique Clickers"
