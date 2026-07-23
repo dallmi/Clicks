@@ -344,9 +344,9 @@ def load_events_flat(duck: duckdb.DuckDBPyConnection, cur, schema: str) -> None:
         'CREATE INDEX ix_events_flat_gpn ON {}.events_flat (gpn)'
     ).format(sql.Identifier(schema)))
 
-    rows = duck.execute(
-        f"SELECT {', '.join(f'\"{c}\"' for c in col_names)} FROM events"
-    ).fetchall()
+    # No backslash inside f-string expressions — Python < 3.12 rejects it.
+    quoted_cols = ", ".join('"' + c + '"' for c in col_names)
+    rows = duck.execute(f"SELECT {quoted_cols} FROM events").fetchall()
     n = copy_arrow_to_postgres(cur, schema, "events_flat", col_names, rows)
     log(f"  loaded {n:,} rows into {schema}.events_flat")
 
@@ -358,6 +358,20 @@ def _read_postmaster_pid() -> int | None:
     try:
         first = pid_file.read_text().splitlines()[0].strip()
         return int(first)
+    except (ValueError, IndexError):
+        return None
+
+
+def _read_postmaster_conn() -> tuple[str, int] | None:
+    """Read (host, port) from postmaster.pid (line 4 = port, line 6 = listen addr)."""
+    pid_file = EMBEDDED_PGDATA / "postmaster.pid"
+    if not pid_file.exists():
+        return None
+    try:
+        lines = pid_file.read_text().splitlines()
+        port = int(lines[3].strip())
+        host = lines[5].strip() or "localhost"
+        return host, port
     except (ValueError, IndexError):
         return None
 
@@ -392,12 +406,22 @@ def stop_embedded_postgres() -> int:
             return 1
 
 
-def status_embedded_postgres() -> int:
+def status_embedded_postgres(args) -> int:
     pid = _read_postmaster_pid()
     if pid is None:
         log("Embedded Postgres: NOT running")
+        log("Start it with: python scripts/duckdb_to_postgres.py --start")
         return 0
     log(f"Embedded Postgres: running (pid {pid}, data dir {EMBEDDED_PGDATA})")
+    conn = _read_postmaster_conn()
+    if conn is not None:
+        # The embedded server uses trust auth (no password) and, on Windows,
+        # a dynamically chosen port that changes on every restart — always
+        # connect with the values shown here, not a remembered port.
+        args.host, args.port = conn
+        args.user = "postgres"
+        args.password = ""
+        _print_connection_banner(args)
     return 0
 
 
@@ -448,7 +472,7 @@ def main() -> int:
     if args.stop:
         return stop_embedded_postgres()
     if args.status:
-        return status_embedded_postgres()
+        return status_embedded_postgres(args)
     if args.start:
         start_embedded_postgres(args)
         _print_connection_banner(args)
@@ -504,6 +528,11 @@ def _print_connection_banner(args) -> None:
     print(f"    Database: {args.dbname}")
     print(f"    User:     {args.user}")
     print(f"    Password: {args.password or '(none — leave blank)'}")
+    print()
+    print("  pgAdmin prompts for a password on every connect unless you tick")
+    print("  'Save password' — leave the field blank and tick it (trust auth).")
+    print("  NOTE: the port changes on every server restart; re-check it here")
+    print("  (--status) and update the pgAdmin server registration if needed.")
     print()
     print(f"  Data directory: {EMBEDDED_PGDATA}")
     print()
