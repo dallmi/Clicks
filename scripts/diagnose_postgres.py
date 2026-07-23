@@ -214,6 +214,8 @@ def main() -> int:
 
     # -- 6. Postgres protocol ---------------------------------------------------
     clicks_exists = False
+    login_ok = False
+    recovering = False
     if server_reachable:
         section("Postgres connection (user=" + args.user + ", trust auth)")
         try:
@@ -226,6 +228,7 @@ def main() -> int:
                 t0 = time.time()
                 conn = psycopg.connect(host=host, port=server_port, dbname="postgres",
                                        user=args.user, connect_timeout=args.timeout)
+                login_ok = True
                 dt = time.time() - t0
                 ver = conn.execute("SELECT version()").fetchone()[0].split(" on ")[0]
                 report("OK", ver + " — connected in %.2fs" % dt)
@@ -254,7 +257,12 @@ def main() -> int:
                 else:
                     report("WARN", "database '" + args.dbname + "' missing — run the migration")
             except Exception as e:
-                report("FAIL", "Postgres login failed: " + str(e).strip())
+                msg = str(e).strip()
+                if "starting up" in msg:
+                    recovering = True
+                    report("WARN", "server is still starting up — crash recovery in progress")
+                else:
+                    report("FAIL", "Postgres login failed: " + msg)
 
     # -- Verdict -----------------------------------------------------------------
     section("VERDICT")
@@ -277,7 +285,13 @@ def main() -> int:
         print()
         print("  Then run this diagnosis again. NOTE: the port changes on every")
         print("  server restart — always use the port this script reports.")
-    elif not clicks_exists:
+    elif recovering:
+        print("  Server is up but still in CRASH RECOVERY ('database system is")
+        print("  starting up'). One-time WAL replay after an unclean shutdown —")
+        print("  slow on the network share. Watch progress in the log above")
+        print("  ('syncing data directory'), then run this script again in a few")
+        print("  minutes. No action needed; do NOT restart the server.")
+    elif login_ok and not clicks_exists:
         print("  Server runs, but the '" + args.dbname + "' database is missing. Next step:")
         print()
         print("      python scripts" + os.sep + "duckdb_to_postgres.py")
@@ -295,9 +309,12 @@ def main() -> int:
         print("    3. If it STILL times out, corporate endpoint security is")
         print("       filtering localhost ports — report back for a workaround.")
 
-    if server_port is not None and server_reachable:
+    if server_port is not None and server_reachable and (login_ok or recovering):
         print()
-        print("  pgAdmin settings (current, verified):")
+        if login_ok:
+            print("  pgAdmin settings (current, verified):")
+        else:
+            print("  pgAdmin settings (valid once recovery finishes):")
         print("      Host:                 " + (server_host or "127.0.0.1"))
         print("      Port:                 " + str(server_port))
         print("      Maintenance database: postgres")
