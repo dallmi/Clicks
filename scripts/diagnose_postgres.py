@@ -19,6 +19,7 @@ import argparse
 import os
 import platform
 import socket
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -77,6 +78,23 @@ def read_postmaster(pgdata: Path):
         return {"error": str(e)}
 
 
+def pid_is_postgres(pid: int):
+    """True/False if `pid` is a live postgres process; None if undeterminable."""
+    try:
+        if os.name == "nt":
+            out = subprocess.run(["tasklist", "/FI", "PID eq " + str(pid)],
+                                 capture_output=True, text=True, timeout=10).stdout
+            return "postgres" in out.lower()
+        os.kill(pid, 0)  # POSIX only: signal 0 = existence check
+        out = subprocess.run(["ps", "-p", str(pid), "-o", "comm="],
+                             capture_output=True, text=True, timeout=10).stdout
+        return "postgres" in out.lower()
+    except ProcessLookupError:
+        return False
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def tcp_check(host: str, port: int, timeout: float = 10.0):
     """Try a raw TCP connect. Returns (ok, seconds, error_message)."""
     t0 = time.time()
@@ -123,6 +141,7 @@ def main() -> int:
     # -- 3. Embedded data directory ------------------------------------------
     section("Embedded Postgres data directory")
     server_host, server_port = args.host, args.port
+    pidfile_stale = False
     # With an explicit --host/--port target the embedded dir is informational only.
     explicit_target = args.host is not None or args.port is not None
     if not EMBEDDED_PGDATA.exists():
@@ -149,8 +168,19 @@ def main() -> int:
         else:
             report("OK", "postmaster.pid: pid=" + str(pm.get("pid")) +
                    " host=" + str(pm.get("host", "?")) + " port=" + str(pm.get("port", "?")))
+            alive = pid_is_postgres(pm["pid"])
+            if alive is True:
+                report("OK", "pid " + str(pm["pid"]) + " is a live postgres process")
+            elif alive is False:
+                report("WARN", "pid " + str(pm["pid"]) + " is NOT a postgres process — "
+                       "postmaster.pid is STALE (leftover from an unclean shutdown)")
+                pidfile_stale = True
+            else:
+                report("INFO", "could not determine process state of pid " + str(pm["pid"]))
             if server_host is None:
                 server_host = pm.get("host", "127.0.0.1")
+                if server_host == "*":
+                    server_host = "127.0.0.1"
             if server_port is None:
                 server_port = pm.get("port")
 
@@ -231,7 +261,16 @@ def main() -> int:
     fails = [m for lvl, m in _findings if lvl == "FAIL"]
     warns = [m for lvl, m in _findings if lvl == "WARN"]
 
-    if not server_reachable:
+    if not server_reachable and pidfile_stale:
+        print("  STALE postmaster.pid — the server is NOT running, but the leftover")
+        print("  pid file from an unclean shutdown makes pgserver report 'ready'")
+        print("  without actually starting Postgres. Next step:")
+        print()
+        print("      python scripts" + os.sep + "duckdb_to_postgres.py --start")
+        print()
+        print("  (the current --start removes the stale file automatically;")
+        print("   manual fix: del data" + os.sep + "postgres" + os.sep + "postmaster.pid)")
+    elif not server_reachable:
         print("  Server is NOT reachable. Next step:")
         print()
         print("      python scripts" + os.sep + "duckdb_to_postgres.py --start")

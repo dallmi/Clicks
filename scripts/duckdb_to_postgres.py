@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -371,9 +372,57 @@ def _read_postmaster_conn() -> tuple[str, int] | None:
         lines = pid_file.read_text().splitlines()
         port = int(lines[3].strip())
         host = lines[5].strip() or "localhost"
+        if host == "*":
+            host = "127.0.0.1"
         return host, port
     except (ValueError, IndexError):
         return None
+
+
+def _port_is_open(host: str, port: int, timeout: float = 5.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _pid_is_postgres(pid: int) -> bool:
+    """True only if `pid` is a live process AND it is postgres."""
+    try:
+        if os.name == "nt":
+            out = subprocess.run(["tasklist", "/FI", "PID eq " + str(pid)],
+                                 capture_output=True, text=True, timeout=10).stdout
+            return "postgres" in out.lower()
+        os.kill(pid, 0)  # POSIX only: signal 0 = existence check
+        out = subprocess.run(["ps", "-p", str(pid), "-o", "comm="],
+                             capture_output=True, text=True, timeout=10).stdout
+        return "postgres" in out.lower()
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _clear_stale_postmaster() -> None:
+    """Remove a stale postmaster.pid left behind by an unclean shutdown.
+
+    pgserver only checks that the recorded PID exists; Windows recycles PIDs,
+    so after a crash/Ctrl-C it can mistake an unrelated process for the
+    server, report "ready" and never actually start Postgres. Consider the
+    file stale when nothing listens on the recorded port AND the recorded
+    PID is not a postgres process.
+    """
+    pid_file = EMBEDDED_PGDATA / "postmaster.pid"
+    if not pid_file.exists():
+        return
+    conn = _read_postmaster_conn()
+    if conn is not None and _port_is_open(conn[0], conn[1]):
+        return  # server genuinely running
+    pid = _read_postmaster_pid()
+    if pid is not None and _pid_is_postgres(pid):
+        log(f"postmaster.pid pid {pid} is a live postgres process; leaving it alone")
+        return
+    log(f"Removing STALE postmaster.pid (pid {pid} is not postgres, port closed)")
+    pid_file.unlink()
 
 
 def stop_embedded_postgres() -> int:
@@ -412,8 +461,12 @@ def status_embedded_postgres(args) -> int:
         log("Embedded Postgres: NOT running")
         log("Start it with: python scripts/duckdb_to_postgres.py --start")
         return 0
-    log(f"Embedded Postgres: running (pid {pid}, data dir {EMBEDDED_PGDATA})")
     conn = _read_postmaster_conn()
+    if conn is None or not _port_is_open(conn[0], conn[1]):
+        log(f"Embedded Postgres: NOT running — stale postmaster.pid (pid {pid}, port closed)")
+        log("Start it with: python scripts/duckdb_to_postgres.py --start (cleans this up)")
+        return 0
+    log(f"Embedded Postgres: running (pid {pid}, data dir {EMBEDDED_PGDATA})")
     if conn is not None:
         # The embedded server uses trust auth (no password) and, on Windows,
         # a dynamically chosen port that changes on every restart — always
@@ -431,6 +484,7 @@ def start_embedded_postgres(args) -> "object":
     from urllib.parse import urlparse, unquote
 
     EMBEDDED_PGDATA.mkdir(parents=True, exist_ok=True)
+    _clear_stale_postmaster()
     log(f"Starting embedded Postgres in {EMBEDDED_PGDATA}")
     log("(first run downloads ~50MB of Postgres binaries into the user cache)")
     # cleanup_mode=None -> server stays running after Python exits, so pgAdmin
@@ -443,7 +497,16 @@ def start_embedded_postgres(args) -> "object":
     args.port = parsed.port or 5432
     args.user = unquote(parsed.username) if parsed.username else "postgres"
     args.password = unquote(parsed.password) if parsed.password else ""
-    log(f"Embedded Postgres ready at {args.host}:{args.port} (user={args.user})")
+    # Never trust "ready" — verify the port actually accepts connections.
+    # (TCP URIs only; on POSIX pgserver uses a unix socket and has no port.)
+    if parsed.port is None:
+        log(f"Embedded Postgres ready (unix socket, user={args.user})")
+    elif _port_is_open(args.host, args.port, timeout=10):
+        log(f"Embedded Postgres ready at {args.host}:{args.port} (user={args.user}) — port verified")
+    else:
+        log(f"ERROR: pgserver reports ready, but {args.host}:{args.port} does not accept connections.")
+        log(f"Check the server log: {EMBEDDED_PGDATA / 'log'}")
+        raise RuntimeError("embedded Postgres did not come up")
     return server
 
 
