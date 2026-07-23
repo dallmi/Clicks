@@ -38,6 +38,7 @@ import os
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -489,7 +490,35 @@ def start_embedded_postgres(args) -> "object":
     log("(first run downloads ~50MB of Postgres binaries into the user cache)")
     # cleanup_mode=None -> server stays running after Python exits, so pgAdmin
     # can connect to it.
-    server = pgserver.get_server(str(EMBEDDED_PGDATA), cleanup_mode=None)
+    try:
+        server = pgserver.get_server(str(EMBEDDED_PGDATA), cleanup_mode=None)
+    except Exception as e:
+        # pgserver waits at most 10s for pg_ctl. After a crash the cluster
+        # replays WAL first ("database system was interrupted" in the log),
+        # which takes far longer on the network share — but the postmaster
+        # keeps running. Poll until it accepts real logins.
+        log(f"pgserver gave up waiting ({type(e).__name__}) — server is likely still")
+        log("starting/recovering; polling up to 10 minutes ...")
+        args.user = "postgres"
+        args.password = ""
+        deadline = time.time() + 600
+        while True:
+            conn = _read_postmaster_conn()
+            if conn is not None and _port_is_open(conn[0], conn[1], timeout=5):
+                try:
+                    import psycopg
+                    psycopg.connect(host=conn[0], port=conn[1], dbname="postgres",
+                                    user=args.user, connect_timeout=10).close()
+                    args.host, args.port = conn
+                    log(f"Recovery finished — embedded Postgres ready at {args.host}:{args.port}")
+                    return None
+                except Exception as pe:
+                    first_line = str(pe).strip().splitlines()[0] if str(pe).strip() else repr(pe)
+                    log("  not accepting logins yet: " + first_line)
+            if time.time() > deadline:
+                log(f"ERROR: server did not come up within 10 minutes. Check {EMBEDDED_PGDATA / 'log'}")
+                raise RuntimeError("embedded Postgres did not come up") from e
+            time.sleep(10)
 
     uri = server.get_uri()
     parsed = urlparse(uri)
