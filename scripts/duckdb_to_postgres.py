@@ -427,7 +427,13 @@ def _clear_stale_postmaster() -> None:
 
 
 def stop_embedded_postgres() -> int:
-    """Stop the embedded Postgres server (kill postmaster from postmaster.pid)."""
+    """Stop the embedded Postgres server CLEANLY (pg_ctl stop -m fast).
+
+    A clean shutdown checkpoints and removes postmaster.pid — the next start
+    is instant. Never hard-kill: os.kill on Windows is TerminateProcess,
+    which is exactly the unclean stop that caused the stale-pid/crash-
+    recovery mess in the first place.
+    """
     if not EMBEDDED_PGDATA.exists():
         log(f"No embedded Postgres data directory at {EMBEDDED_PGDATA}")
         return 0
@@ -436,6 +442,18 @@ def stop_embedded_postgres() -> int:
         log("Embedded Postgres is not running (no postmaster.pid)")
         return 0
     log(f"Stopping embedded Postgres (pid {pid})")
+    # Preferred: the bundled pg_ctl, independent of pgserver's server state
+    # (pgserver's own cleanup() chokes on a server that is mid-recovery).
+    try:
+        from pgserver._commands import POSTGRES_BIN_PATH  # type: ignore
+        pg_ctl_exe = POSTGRES_BIN_PATH / ("pg_ctl.exe" if os.name == "nt" else "pg_ctl")
+        subprocess.run([str(pg_ctl_exe), "-D", str(EMBEDDED_PGDATA),
+                        "stop", "-m", "fast", "-w", "-t", "120"],
+                       check=True, timeout=180)
+        log("Stopped cleanly (pg_ctl stop -m fast).")
+        return 0
+    except Exception as e:
+        log(f"pg_ctl stop failed ({e}); trying pgserver cleanup")
     try:
         import pgserver  # type: ignore
         pgserver.get_server(str(EMBEDDED_PGDATA), cleanup_mode=None).cleanup()
@@ -443,6 +461,7 @@ def stop_embedded_postgres() -> int:
         return 0
     except Exception as e:
         log(f"pgserver cleanup failed ({e}); falling back to OS signal")
+        log("WARNING: this is an UNCLEAN stop — next start will run crash recovery")
         import signal
         try:
             os.kill(pid, signal.SIGTERM)
@@ -454,6 +473,21 @@ def stop_embedded_postgres() -> int:
         except Exception as e2:
             log(f"ERROR: could not stop server: {e2}")
             return 1
+
+
+def reset_embedded_postgres() -> int:
+    """Stop the server and DELETE the data directory for a guaranteed clean slate.
+
+    Safe escape hatch: every byte in the cluster is derived from data/clicks.db,
+    so a full migration run rebuilds everything.
+    """
+    import shutil
+    stop_embedded_postgres()
+    if EMBEDDED_PGDATA.exists():
+        log(f"Deleting {EMBEDDED_PGDATA}")
+        shutil.rmtree(EMBEDDED_PGDATA)
+    log("Clean slate. Rebuild with: python scripts/duckdb_to_postgres.py")
+    return 0
 
 
 def status_embedded_postgres(args) -> int:
@@ -546,7 +580,10 @@ def main() -> int:
     parser.add_argument("--start", action="store_true",
                         help="Just start the embedded Postgres server (no data migration) and exit.")
     parser.add_argument("--stop", action="store_true",
-                        help="Stop the embedded Postgres server and exit.")
+                        help="Stop the embedded Postgres server cleanly and exit.")
+    parser.add_argument("--reset", action="store_true",
+                        help="Stop the server and DELETE data/postgres (all data is "
+                             "derived; rebuild with a full migration run).")
     parser.add_argument("--status", action="store_true",
                         help="Show whether the embedded Postgres server is running and exit.")
     parser.add_argument("--host", default=os.environ.get("PGHOST", "localhost"))
@@ -563,6 +600,8 @@ def main() -> int:
 
     if args.stop:
         return stop_embedded_postgres()
+    if args.reset:
+        return reset_embedded_postgres()
     if args.status:
         return status_embedded_postgres(args)
     if args.start:
@@ -603,6 +642,10 @@ def main() -> int:
         log("ANALYZE")
         cur.execute(sql.SQL("ANALYZE"))
         pg.commit()
+        # Flush everything to disk now: if the server is later killed
+        # uncleanly, crash recovery has (almost) no WAL left to replay.
+        log("CHECKPOINT")
+        cur.execute(sql.SQL("CHECKPOINT"))
 
     log("Done.")
 
